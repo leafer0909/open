@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>出勤</title>
+<!--
+  LINE 出勤ページ（LIFF）
+  スマホのGPSで現在地を取得し、Apps Script に送って出勤を記録します。
+
+  ■ 設定（下の2か所を書き換えてください）
+    LIFF_ID … LINE Developers の LIFF タブに表示される「LIFF ID」
+    GAS_URL … Apps Script のウェブアプリのURL（LINEのWebhook URLと同じもの）
+-->
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root { --green: #06c755; --text: #1f2328; --sub: #5b636b; --bg: #f6f7f8; --card: #fff; --red: #d1242f; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+  }
+  .card {
+    width: 100%; max-width: 400px; background: var(--card); border-radius: 16px;
+    padding: 32px 24px; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,.06);
+  }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  .clock { font-size: 40px; font-weight: 700; letter-spacing: 1px; margin: 8px 0 4px; font-variant-numeric: tabular-nums; }
+  .date { color: var(--sub); margin-bottom: 24px; }
+  .status { min-height: 48px; white-space: pre-line; line-height: 1.6; margin: 16px 0; }
+  .status.ok { color: var(--green); font-weight: 700; }
+  .status.ng { color: var(--red); }
+  button {
+    width: 100%; border: 0; border-radius: 12px; padding: 16px; font-size: 18px; font-weight: 700;
+    background: var(--green); color: #fff; cursor: pointer;
+  }
+  button.sub { background: #e9ecef; color: var(--text); margin-top: 12px; font-weight: 500; }
+  button:disabled { opacity: .5; }
+  .spinner {
+    width: 28px; height: 28px; margin: 8px auto; border: 3px solid #dfe3e6; border-top-color: var(--green);
+    border-radius: 50%; animation: spin 1s linear infinite; display: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>出勤</h1>
+    <div class="clock" id="clock">--:--</div>
+    <div class="date" id="date"></div>
+    <div class="spinner" id="spinner"></div>
+    <div class="status" id="status">準備中…</div>
+    <button id="checkin" disabled>出勤する</button>
+    <button id="close" class="sub">閉じる</button>
+  </div>
+
+<script>
+  // ===== 設定 =====
+  const LIFF_ID = 'ここにLIFF IDを貼り付け';
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzalJEbvSnagpUa7yxwQhmnCgGLNAtLfDVdY7Um2jdXGsAgX3D6NEHGe8QjeELg1YD7/exec';
+  // ================
+
+  const $ = (id) => document.getElementById(id);
+  const setStatus = (text, cls) => { $('status').textContent = text; $('status').className = 'status ' + (cls || ''); };
+  const busy = (on) => { $('spinner').style.display = on ? 'block' : 'none'; $('checkin').disabled = on; };
+
+  // 時計
+  function tick() {
+    const d = new Date();
+    $('clock').textContent = d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+    $('date').textContent = d.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
+  }
+  tick(); setInterval(tick, 1000);
+
+  // スマホのGPSで現在地を取得（地図のピンは使わない）
+  function getPosition() {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) return reject(new Error('この端末では位置情報が使えません。'));
+      navigator.geolocation.getCurrentPosition(resolve, (err) => {
+        const msg = {
+          1: '位置情報の利用が許可されていません。\nスマホの設定で LINE の位置情報を「許可」にしてください。',
+          2: '現在地を取得できませんでした。電波のよい場所でもう一度お試しください。',
+          3: '現在地の取得に時間がかかっています。もう一度お試しください。'
+        }[err.code] || '現在地を取得できませんでした。';
+        reject(new Error(msg));
+      }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+    });
+  }
+
+  async function checkin() {
+    busy(true);
+    try {
+      setStatus('現在地を確認しています…');
+      const pos = await getPosition();
+
+      setStatus('記録しています…');
+      const res = await fetch(GAS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'liff_checkin',
+          idToken: liff.getIDToken(),
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy
+        })
+      });
+      const data = await res.json();
+      setStatus(data.message || '記録しました。', data.ok ? 'ok' : 'ng');
+      if (data.ok) $('checkin').style.display = 'none';
+    } catch (e) {
+      setStatus(e.message || '通信に失敗しました。もう一度お試しください。', 'ng');
+    } finally {
+      busy(false);
+    }
+  }
+
+  async function main() {
+    try {
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) { liff.login(); return; }
+      setStatus('「出勤する」を押してください。');
+      $('checkin').disabled = false;
+    } catch (e) {
+      setStatus('ページの準備に失敗しました。\nLINEのトーク画面から開き直してください。', 'ng');
+    }
+  }
+
+  $('checkin').addEventListener('click', checkin);
+  $('close').addEventListener('click', () => {
+    if (window.liff && liff.isInClient && liff.isInClient()) liff.closeWindow(); else window.close();
+  });
+  main();
+</script>
+</body>
+</html>
