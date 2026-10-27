@@ -108,7 +108,15 @@
       });
       const data = await res.json();
       setStatus(data.message || '記録しました。', data.ok ? 'ok' : 'ng');
-      if (data.ok) $('checkin').style.display = 'none';
+      if (data.ok) {
+           $('checkin').style.display = 'none';
+           // トークに「出勤しました」を送る（選択ボタンが消える）→ ページを自動で閉じる
+           if (liff.isInClient()) {
+             const t = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+             try { await liff.sendMessages([{ type: 'text', text: '出勤しました（' + t + '）' }]); } catch (e) { console.warn(e); }
+             setTimeout(() => liff.closeWindow(), 1500);
+           }
+         }
     } catch (e) {
       setStatus(e.message || '通信に失敗しました。もう一度お試しください。', 'ng');
     } finally {
