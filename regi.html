@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>レジ開閉</title>
+<!--
+  LINE レジ開閉ページ（LIFF）
+  開け/締めを選び、金種ごとの枚数を入力して送信します。合計は自動計算。
+  開けは前回の締めと比べ、結果は送信後に表示します（ブラインドチェック）。
+
+  ■ 設定（index.html と同じ値を入れてください）
+    LIFF_ID … LINE Developers の LIFF タブに表示される「LIFF ID」
+    GAS_URL … Apps Script のウェブアプリのURL
+-->
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root {
+    --green: #06c755; --green-dark: #05a647; --text: #1f2328; --sub: #5b636b; --line: #e3e6e8;
+    --bg: #f6f7f8; --card: #fff; --red: #d1242f; --red-bg: #fff1f0; --ok-bg: #effaf3;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    padding: 16px 16px calc(120px + env(safe-area-inset-bottom));
+  }
+  .wrap { max-width: 440px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 4px 0 12px; }
+  .muted { color: var(--sub); font-size: 14px; }
+  .hidden { display: none !important; }
+
+  /* 開け/締めの選択 */
+  .last { background: var(--card); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; font-size: 14px; color: var(--sub); }
+  .choice { display: grid; gap: 12px; }
+  .choice button {
+    border: 2px solid var(--line); background: var(--card); color: var(--text);
+    border-radius: 14px; padding: 22px 16px; font-size: 20px; font-weight: 700; text-align: left; position: relative;
+  }
+  .choice button.suggest { border-color: var(--green); background: var(--ok-bg); }
+  .choice button .tag {
+    position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+    font-size: 12px; font-weight: 700; color: #fff; background: var(--green); border-radius: 999px; padding: 4px 10px;
+  }
+
+  /* 金種入力 */
+  .table { background: var(--card); border-radius: 12px; overflow: hidden; }
+  .row { display: grid; grid-template-columns: 84px 1fr 104px; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .row label { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .row input {
+    width: 100%; font-size: 20px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    text-align: right; font-variant-numeric: tabular-nums; background: #fbfbfc;
+  }
+  .row input:focus { outline: 2px solid var(--green); border-color: var(--green); background: #fff; }
+  .row .sub { text-align: right; color: var(--sub); font-variant-numeric: tabular-nums; font-size: 15px; }
+  .back { background: none; border: 0; color: var(--sub); font-size: 15px; padding: 4px 0; margin-bottom: 4px; }
+
+  /* 結果 */
+  .msg { white-space: pre-line; line-height: 1.6; border-radius: 12px; padding: 14px; margin: 14px 0 0; background: var(--card); }
+  .msg.ok { background: var(--ok-bg); color: #0b6b31; }
+  .msg.ng { background: var(--red-bg); color: var(--red); }
+  textarea { width: 100%; font-size: 16px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; margin-top: 10px; min-height: 80px; }
+
+  /* 下に固定の合計＋送信 */
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .bar .inner { max-width: 440px; margin: 0 auto; display: flex; align-items: center; gap: 12px; }
+  .total { flex: 1; }
+  .total small { display: block; color: var(--sub); font-size: 12px; }
+  .total b { font-size: 26px; font-variant-numeric: tabular-nums; }
+  .primary { border: 0; border-radius: 12px; padding: 14px 22px; font-size: 17px; font-weight: 700; background: var(--green); color: #fff; }
+  .primary:disabled { opacity: .5; }
+  .close { width: 100%; margin-top: 14px; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; background: #e9ecef; color: var(--text); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 画面1：開け/締めの選択 -->
+  <section id="step1">
+    <h1>レジ開閉</h1>
+    <div class="last" id="last">読み込み中…</div>
+    <div class="choice">
+      <button id="btnOpen" data-kind="レジ開け">レジ開け</button>
+      <button id="btnClose" data-kind="レジ締め">レジ締め</button>
+    </div>
+  </section>
+
+  <!-- 画面2：金種入力 -->
+  <section id="step2" class="hidden">
+    <button class="back" id="back">‹ 戻る</button>
+    <h1 id="title">レジ開け</h1>
+    <p class="muted" style="margin:0 0 12px">金種ごとの枚数を入力してください。</p>
+    <div class="table" id="table"></div>
+    <div id="msg" class="msg hidden"></div>
+    <div id="reasonBox" class="hidden">
+      <textarea id="reason" placeholder="合わない理由（例: 両替した、数え間違い など）"></textarea>
+    </div>
+    <button class="close hidden" id="close">閉じる</button>
+  </section>
+</div>
+
+<div class="bar hidden" id="bar">
+  <div class="inner">
+    <div class="total"><small>合計</small><b id="total">0円</b></div>
+    <button class="primary" id="submit">送信する</button>
+  </div>
+</div>
+
+<script>
+  // ===== 設定 =====
+  const LIFF_ID = '2012248509-RClZWVEk';
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzalJEbvSnagpUa7yxwQhmnCgGLNAtLfDVdY7Um2jdXGsAgX3D6NEHGe8QjeELg1YD7/exec';
+  // ================
+
+  const DENOMS = [10000, 5000, 1000, 500, 100, 50, 10, 5, 1];
+  const $ = (id) => document.getElementById(id);
+  const yen = (n) => n.toLocaleString('ja-JP') + '円';
+  let kind = 'レジ開け';
+
+  async function api(payload) {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(Object.assign({ idToken: liff.getIDToken() }, payload))
+    });
+    return res.json();
+  }
+
+  // 金種の入力欄を作る
+  function buildTable() {
+    $('table').innerHTML = DENOMS.map((d, i) => `
+      <div class="row">
+        <label for="c${i}">${d.toLocaleString('ja-JP')}円</label>
+        <input id="c${i}" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+               enterkeyhint="${i < DENOMS.length - 1 ? 'next' : 'done'}" placeholder="0">
+        <div class="sub" id="s${i}">0円</div>
+      </div>`).join('');
+    DENOMS.forEach((d, i) => {
+      const el = $('c' + i);
+      el.addEventListener('input', () => {
+        el.value = el.value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\D/g, '');
+        recalc();
+      });
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (i < DENOMS.length - 1) $('c' + (i + 1)).focus(); else el.blur();
+        }
+      });
+    });
+  }
+
+  function counts() { return DENOMS.map((_, i) => Number($('c' + i).value) || 0); }
+
+  function recalc() {
+    const c = counts();
+    let t = 0;
+    DENOMS.forEach((d, i) => { const s = d * c[i]; t += s; $('s' + i).textContent = yen(s); });
+    $('total').textContent = yen(t);
+  }
+
+  function showMsg(text, cls) { const m = $('msg'); m.textContent = text; m.className = 'msg ' + (cls || ''); }
+
+  function goStep2(k) {
+    kind = k;
+    $('title').textContent = k;
+    $('step1').classList.add('hidden');
+    $('step2').classList.remove('hidden');
+    $('bar').classList.remove('hidden');
+    $('msg').classList.add('hidden');
+    $('reasonBox').classList.add('hidden');
+    $('submit').textContent = '送信する';
+    window.scrollTo(0, 0);
+    setTimeout(() => $('c0').focus(), 150);
+  }
+
+  async function submit() {
+    const c = counts();
+    if (c.every((n) => n === 0)) { showMsg('枚数を入力してください。', 'ng'); return; }
+    const needReason = !$('reasonBox').classList.contains('hidden');
+    const reason = $('reason').value.trim();
+    if (needReason && !reason) { showMsg('合わない理由を入力してください。', 'ng'); $('reason').focus(); return; }
+
+    $('submit').disabled = true; $('submit').textContent = '送信中…';
+    try {
+      const data = await api({ action: 'regi_submit', kind: kind, counts: c, reason: needReason ? reason : '' });
+      if (data.ok) {
+        showMsg(data.message, 'ok');
+        $('bar').classList.add('hidden');
+        $('reasonBox').classList.add('hidden');
+        $('back').classList.add('hidden');
+        document.querySelectorAll('#table input').forEach((el) => (el.disabled = true));
+        $('close').classList.remove('hidden');
+      } else {
+        showMsg(data.message, 'ng');
+        if (data.needReason) { $('reasonBox').classList.remove('hidden'); $('submit').textContent = '理由を付けて記録'; }
+        else if (data.recount) { $('submit').textContent = '数え直して送信'; }
+        else { $('submit').textContent = '送信する'; }
+      }
+      $('msg').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (e) {
+      showMsg('通信に失敗しました。もう一度お試しください。', 'ng');
+      $('submit').textContent = '送信する';
+    } finally {
+      $('submit').disabled = false;
+    }
+  }
+
+  async function main() {
+    buildTable();
+    try {
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+      const st = await api({ action: 'regi_status' });
+      if (!st.ok) { $('last').textContent = st.message; return; }
+      $('last').textContent = st.last
+        ? '前回: ' + st.last.kind + '（' + st.last.when + (st.last.name ? '・' + st.last.name + 'さん' : '') + '）'
+        : 'まだ記録がありません。';
+      const target = st.suggest === 'レジ締め' ? $('btnClose') : $('btnOpen');
+      target.classList.add('suggest');
+      target.insertAdjacentHTML('beforeend', '<span class="tag">次はこちら</span>');
+    } catch (e) {
+      $('last').textContent = 'ページの準備に失敗しました。LINEのトーク画面から開き直してください。';
+    }
+  }
+
+  $('btnOpen').addEventListener('click', () => goStep2('レジ開け'));
+  $('btnClose').addEventListener('click', () => goStep2('レジ締め'));
+  $('back').addEventListener('click', () => {
+    $('step2').classList.add('hidden'); $('bar').classList.add('hidden'); $('step1').classList.remove('hidden');
+  });
+  $('submit').addEventListener('click', submit);
+  $('close').addEventListener('click', () => { if (liff.isInClient()) liff.closeWindow(); else window.close(); });
+  main();
+</script>
+</body>
+</html>
