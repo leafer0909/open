@@ -114,7 +114,7 @@
            if (liff.isInClient()) {
              const t = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
              try { await liff.sendMessages([{ type: 'text', text: '出勤しました（' + t + '）' }]); } catch (e) { console.warn(e); }
-             setTimeout(() => liff.closeWindow(), 1500);
+             setTimeout(() => liff.closeWindow(), 1000);
            }
          }
     } catch (e) {
