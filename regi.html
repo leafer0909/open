@@ -142,6 +142,9 @@
   .total small { display: block; color: var(--sub); font-size: 12px; }
   .total b { font-size: 26px; font-variant-numeric: tabular-nums; }
   .primary { flex: 2; border: 0; border-radius: 12px; padding: 14px 18px; font-size: 17px; font-weight: 700; background: var(--green); color: #fff; }
+  .salesLine { display: flex; align-items: center; justify-content: space-between; background: var(--card); border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; font-size: 15px; }
+  .salesLine b { font-size: 17px; font-variant-numeric: tabular-nums; margin-left: 4px; }
+  .salesLine button { border: 0; background: #e8f0fe; color: #1a56c4; border-radius: 8px; padding: 7px 12px; font-size: 14px; font-weight: 700; }
   .secondary { flex: 1; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; background: #e9ecef; color: var(--text); }
 </style>
 </head>
@@ -153,8 +156,26 @@
   </div>
   <div class="seg" id="tabs"></div>
 
+  <!-- 締め：現金売上の入力（Squareと連動するまでの暫定） -->
+  <section id="vSales" hidden>
+    <div class="card">
+      <div class="field">
+        <div class="label">今回の営業の現金売上</div>
+        <div class="amount">
+          <input type="text" id="salesInput" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off">
+          <span>円</span>
+        </div>
+      </div>
+    </div>
+    <p class="muted" style="margin-top:10px">Squareで現金で受け取った売上の合計を入力してください（なければ 0）。<br>次に、金種ごとの枚数を入力します。</p>
+  </section>
+
   <!-- 開け・締め：金種入力 -->
   <section id="vCount" hidden>
+    <div class="salesLine" id="salesLine" hidden>
+      <span>現金売上 <b id="salesShow"></b></span>
+      <button id="salesEdit">変更する</button>
+    </div>
     <p class="muted">金種ごとの枚数を入力してください。</p>
     <div class="table" id="table"></div>
     <div id="reasonBox" hidden>
@@ -164,7 +185,7 @@
       <div class="line"><span>レジ締め金額</span><b id="cfClose"></b></div>
       <div class="line"><span>予想レジ金額</span><b><span id="cfExpected"></span><span class="diff" id="cfDiff"></span></b></div>
       <div class="gap"></div>
-      <div class="line"><span>現金売上（Square入力分）</span><b id="cfSquare"></b></div>
+      <div class="line"><span id="cfSquareLabel">現金売上（Square入力分）</span><b id="cfSquare"></b></div>
       <div class="note" id="cfNote"></div>
       <div class="q">これで良いですか？</div>
       <div id="cfMemoBox" hidden><textarea id="cfMemo" placeholder="メモ（例: 両替で1,000円札を補充した など）"></textarea></div>
@@ -244,6 +265,12 @@
     <button class="primary" id="countSubmit">送信する</button>
   </div>
 </div>
+<!-- 下のボタン（締め：現金売上） -->
+<div class="bar" id="barSales" hidden>
+  <div class="inner">
+    <button class="primary" id="salesNext">次へ（枚数の入力）</button>
+  </div>
+</div>
 <!-- 下のボタン（入金・出金） -->
 <div class="bar" id="barMoney" hidden>
   <div class="inner">
@@ -270,6 +297,8 @@
   let tab = '';                       // 開け／締め／入金／出金／確認
   const ms = { category: '', who: null, dateMode: '', date: '' };   // 入出金の入力状態
   let listMode = 'now', listData = null;
+  let salesVal = null;                // レジ締めの前に入力した現金売上（Square未設定の間だけ）
+  const askSales = () => tab === 'レジ締め' && conf.askSales;
 
   async function api(payload) {
     const res = await fetch(GAS_URL, {
@@ -300,7 +329,12 @@
     hideMsg();
     renderHead();
     const isCount = t === 'レジ開け' || t === 'レジ締め', isMoney = t === '入金' || t === '出金';
-    $('vCount').hidden = !isCount; $('barCount').hidden = !isCount;
+    const needSales = isCount && askSales() && salesVal === null;
+    $('vSales').hidden = !needSales; $('barSales').hidden = !needSales;
+    $('vCount').hidden = !isCount || needSales; $('barCount').hidden = !isCount || needSales;
+    $('salesLine').hidden = !(isCount && askSales() && salesVal !== null);
+    if (salesVal !== null) $('salesShow').textContent = yen(salesVal);
+    if (needSales) { $('salesInput').value = ''; setTimeout(() => $('salesInput').focus(), 50); }
     $('vMoney').hidden = !isMoney; $('barMoney').hidden = !isMoney;
     $('vList').hidden = t !== '確認';
     if (isCount) { $('cf').hidden = true; $('reasonBox').hidden = true; setCountInputs(true); $('countSubmit').textContent = '送信する'; }
@@ -346,7 +380,7 @@
     $('countSubmit').disabled = true;
     $('countSubmit').textContent = tab === 'レジ締め' ? 'Squareの売上を確認中…' : '送信中…';
     try {
-      const d = await api({ action: 'regi_submit', kind: regiKind(), counts: c, reason: needReason ? reason : '' });
+      const d = await api({ action: 'regi_submit', kind: regiKind(), counts: c, reason: needReason ? reason : '', manualSales: askSales() ? salesVal : undefined });
       if (d.ok && d.preview) { showCloseConfirm(d); }
       else if (d.ok) { finished(d.message, regiKind() + 'を記録しました（' + yen(c.reduce((s, n, i) => s + n * DENOMS[i], 0)) + '）', regiKind() + 'を記録しました'); }
       else {
@@ -374,6 +408,7 @@
       $('cfDiff').className = 'diff ' + (d.diff < 0 ? 'minus' : d.diff > 0 ? 'plus' : '');
     } else { $('cfExpected').textContent = '—'; $('cfDiff').textContent = ''; }
     $('cfSquare').textContent = (d.square !== null && d.square !== undefined) ? yen(d.square) : '—';
+    $('cfSquareLabel').textContent = d.manual ? '現金売上（手入力）' : '現金売上（Square入力分）';
     $('cfNote').textContent = d.note || (d.squareError ? 'Squareの売上を取得できませんでした。このまま記録して、あとで取り直すことができます。' : '');
     $('cfMemoBox').hidden = true; $('cfMemoBtn').hidden = false; $('cfYes').textContent = 'はい';
     $('cf').hidden = false;
@@ -388,7 +423,7 @@
     $('cfYes').textContent = '記録中…';
     try {
       const c = counts();
-      const d = await api({ action: 'regi_submit', kind: 'レジ締め', counts: c, confirm: true, memo: memo });
+      const d = await api({ action: 'regi_submit', kind: 'レジ締め', counts: c, confirm: true, memo: memo, manualSales: askSales() ? salesVal : undefined });
       if (d.ok) finished(d.message, 'レジ締めを記録しました（' + yen(c.reduce((s, n, i) => s + n * DENOMS[i], 0)) + '）', 'レジ締めを記録しました');
       else { showMsg(d.message, 'ng'); $('cfYes').textContent = memoOpen ? 'メモを付けて記録' : 'はい'; }
     } catch (e) {
@@ -552,6 +587,7 @@
     recalc(); $('reason').value = ''; $('cfMemo').value = '';
     $('amount').value = ''; $('memo').value = ''; $('otherName').value = ''; $('workDate').value = '';
     Object.assign(ms, { category: '', who: null, dateMode: '', date: '' });
+    salesVal = null;
     $('tabs').hidden = false;
     try {
       const r = await api({ action: 'register_status' });
@@ -561,6 +597,17 @@
   }
 
   // ===== ボタン =====
+  const salesValue = () => $('salesInput').value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[^\d]/g, '');
+  $('salesInput').addEventListener('input', () => { const v = salesValue(); $('salesInput').value = v ? Number(v).toLocaleString('ja-JP') : ''; });
+  $('salesInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('salesNext').click(); } });
+  $('salesNext').addEventListener('click', () => {
+    const v = salesValue();
+    if (v === '') { showMsg('現金売上を入力してください（なければ 0）。', 'ng'); $('salesInput').focus(); return; }
+    salesVal = Number(v);
+    selectTab('レジ締め');
+    window.scrollTo(0, 0);
+  });
+  $('salesEdit').addEventListener('click', () => { const v = salesVal; salesVal = null; selectTab('レジ締め'); $('salesInput').value = v.toLocaleString('ja-JP'); });
   $('countSubmit').addEventListener('click', countSubmit);
   $('cfYes').addEventListener('click', confirmClose);
   $('cfMemoBtn').addEventListener('click', () => { $('cfMemoBox').hidden = false; $('cfMemoBtn').hidden = true; $('cfYes').textContent = 'メモを付けて記録'; $('cfMemo').focus(); });
