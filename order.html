@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>発注買出し</title>
+<!--
+  LINE 発注買出しページ（LIFF）
+    [在庫切れ] … 1行に1品を自由に書いて記録（「在庫切れ」シートに1品1行・未入荷）
+    [確認]     … 未入荷（すべて）／入荷済（過去1週間）を切り替えて表示。［入荷済にする］は誰でも押せる
+  未入荷の品目は、毎朝10時に店長へまとめて送られます。
+
+  ■ 設定
+    LIFF_ID … 発注買出し用の「LIFF ID」（以前の入出金ページのLIFF。エンドポイントURLを order.html に）
+    GAS_URL … Apps Script のウェブアプリのURL（index.html・regi.html と同じ）
+-->
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root {
+    --green: #06c755; --text: #1f2328; --sub: #5b636b; --line: #e3e6e8;
+    --bg: #f6f7f8; --card: #fff; --red: #d1242f; --red-bg: #fff1f0; --ok-bg: #effaf3; --sel: #e7f8ee;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    padding: 16px 16px calc(110px + env(safe-area-inset-bottom));
+  }
+  .wrap { max-width: 440px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 4px 0 12px; }
+  .muted { color: var(--sub); font-size: 13.5px; margin: 10px 2px 0; line-height: 1.6; }
+  button { font-family: inherit; }
+  button:disabled { opacity: .5; }
+
+  .seg { display: grid; grid-template-columns: 1fr 1fr; background: #eceef0; border-radius: 10px; padding: 3px; margin-bottom: 14px; }
+  .seg button { border: 0; background: none; padding: 10px 2px; font-size: 15px; font-weight: 700; border-radius: 8px; color: var(--sub); }
+  .seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .seg button .n { display: inline-block; min-width: 18px; margin-left: 4px; padding: 0 5px; border-radius: 999px; background: var(--red); color: #fff; font-size: 11.5px; line-height: 18px; }
+
+  .label { font-size: 13px; color: var(--sub); font-weight: 600; margin: 0 2px 8px; }
+  textarea {
+    width: 100%; min-height: 220px; font-size: 17px; line-height: 1.7; padding: 12px 14px; border: 1px solid var(--line);
+    border-radius: 14px; background: var(--card); color: var(--text); font-family: inherit; resize: vertical;
+  }
+  textarea:focus { outline: 2px solid var(--green); border-color: var(--green); }
+
+  .card { background: var(--card); border-radius: 14px; padding: 4px 14px; }
+  .item { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 11px 0; border-bottom: 1px solid var(--line); align-items: center; }
+  .item:last-child { border-bottom: 0; }
+  .item .what { font-weight: 600; font-size: 15.5px; min-width: 0; word-break: break-all; }
+  .item .meta { grid-column: 1; font-size: 12.5px; color: var(--sub); }
+  .item .act { grid-row: 1 / span 2; grid-column: 2; border: 1.5px solid var(--green); background: var(--card); color: #0b6b31; border-radius: 8px; padding: 7px 10px; font-size: 13px; font-weight: 700; }
+  .empty { padding: 18px 0; text-align: center; color: var(--sub); font-size: 14px; }
+  .reload { width: 100%; margin-top: 12px; border: 0; border-radius: 12px; padding: 12px; font-size: 15px; background: #e9ecef; color: var(--text); }
+
+  .msg { white-space: pre-line; line-height: 1.6; border-radius: 12px; padding: 12px 14px; margin-top: 12px; background: var(--card); }
+  .msg.ok { background: var(--ok-bg); color: #0b6b31; }
+  .msg.ng { background: var(--red-bg); color: var(--red); }
+
+  .done { background: var(--card); border-radius: 16px; padding: 26px 18px 18px; text-align: center; }
+  .done .mark { width: 56px; height: 56px; border-radius: 50%; background: var(--green); color: #fff; font-size: 30px; line-height: 56px; margin: 0 auto 10px; font-weight: 700; }
+  .done h2 { font-size: 20px; margin: 0 0 12px; }
+  .done .detail { white-space: pre-line; line-height: 1.7; text-align: left; background: var(--bg); border-radius: 12px; padding: 12px 14px; font-size: 15px; }
+  .done .btns { display: grid; gap: 10px; margin-top: 16px; }
+  .done .again { border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; background: var(--green); color: #fff; }
+  .done .close { border: 0; border-radius: 12px; padding: 14px; font-size: 16px; background: #e9ecef; color: var(--text); }
+
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  .bar .inner { max-width: 440px; margin: 0 auto; }
+  .primary { width: 100%; border: 0; border-radius: 12px; padding: 15px 18px; font-size: 17px; font-weight: 700; background: var(--green); color: #fff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>発注買出し</h1>
+  <div class="seg" id="tabs">
+    <button class="on" id="tAdd">在庫切れ</button>
+    <button id="tList">確認</button>
+  </div>
+
+  <!-- 在庫切れ -->
+  <section id="vAdd">
+    <div class="label">なくなった品を、1行に1品ずつ書いてください</div>
+    <textarea id="text" placeholder="例）&#10;レモン&#10;氷&#10;おしぼり"></textarea>
+    <p class="muted">未入荷の品は、毎朝10時に店長へまとめて送られます。</p>
+  </section>
+
+  <!-- 確認 -->
+  <section id="vList" hidden>
+    <div class="seg">
+      <button class="on" id="lWait">未入荷</button>
+      <button id="lDone">入荷済</button>
+    </div>
+    <div id="list"></div>
+    <button class="reload" id="reload">最新の状態にする</button>
+  </section>
+
+  <div id="msg" class="msg" hidden></div>
+
+  <section class="done" id="done" hidden>
+    <div class="mark">✓</div>
+    <h2>在庫切れを記録しました</h2>
+    <div class="detail" id="doneDetail"></div>
+    <div class="btns">
+      <button class="again" id="again">続けて記録する</button>
+      <button class="close" id="close">閉じる</button>
+    </div>
+  </section>
+</div>
+
+<div class="bar" id="bar">
+  <div class="inner"><button class="primary" id="submit">記録する</button></div>
+</div>
+
+<script>
+  // ===== 設定 =====
+  const LIFF_ID = '2012248509-AB4Y5XGj';
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzalJEbvSnagpUa7yxwQhmnCgGLNAtLfDVdY7Um2jdXGsAgX3D6NEHGe8QjeELg1YD7/exec';
+  // ================
+
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+
+  let data = null;          // { wait: [...], done: [...] }
+  let listMode = 'wait';
+
+  async function api(payload) {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(Object.assign({ idToken: liff.getIDToken() }, payload))
+    });
+    return res.json();
+  }
+  function showMsg(text, cls) { const m = $('msg'); m.textContent = text; m.className = 'msg ' + (cls || ''); m.hidden = false; }
+  function hideMsg() { $('msg').hidden = true; }
+  const lines = () => [...new Set($('text').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean))];
+
+  // ===== タブ =====
+  function selectTab(t) {
+    hideMsg();
+    $('tAdd').classList.toggle('on', t === 'add');
+    $('tList').classList.toggle('on', t === 'list');
+    $('vAdd').hidden = t !== 'add'; $('bar').hidden = t !== 'add';
+    $('vList').hidden = t !== 'list';
+    if (t === 'add') updateButton();
+    if (t === 'list') load();
+  }
+  function updateButton() {
+    const n = lines().length;
+    $('submit').textContent = n ? n + '品を記録する' : '記録する';
+    $('submit').disabled = !n;
+  }
+  function updateBadge() {
+    $('tList').replaceChildren(document.createTextNode('確認'));
+    if (data && data.wait.length) $('tList').append(el('span', 'n', String(data.wait.length)));
+  }
+
+  // ===== 在庫切れを記録 =====
+  async function submit() {
+    if (!lines().length) return;
+    $('submit').disabled = true; $('submit').textContent = '記録中…';
+    try {
+      const r = await api({ action: 'stock_add', text: $('text').value });
+      if (!r.ok) { showMsg(r.message, 'ng'); updateButton(); return; }
+      $('text').value = '';
+      ['tabs', 'vAdd', 'bar'].forEach((id) => ($(id).hidden = true));
+      hideMsg();
+      $('doneDetail').textContent = r.message;
+      $('done').hidden = false;
+      window.scrollTo(0, 0);
+      api({ action: 'stock_status' }).then((s) => { if (s.ok) { data = s; updateBadge(); } }).catch(() => {});
+      // トークにも記録を残す（LIFFに chat_message.write の権限が必要）
+      if (liff.isInClient() && r.chat) { try { await liff.sendMessages([{ type: 'text', text: r.chat }]); } catch (e) { console.warn(e); } }
+    } catch (e) {
+      showMsg('通信に失敗しました。もう一度お試しください。', 'ng'); updateButton();
+    }
+  }
+
+  // ===== 確認 =====
+  function render() {
+    $('lWait').classList.toggle('on', listMode === 'wait');
+    $('lDone').classList.toggle('on', listMode === 'done');
+    updateBadge();
+    const card = el('div', 'card');
+    if (!data) card.append(el('div', 'empty', '読み込み中…'));
+    else {
+      const rows = listMode === 'wait' ? data.wait : data.done;
+      if (!rows.length) card.append(el('div', 'empty', listMode === 'wait' ? '未入荷の品はありません。' : '過去1週間に入荷した品はありません。'));
+      rows.forEach((it) => {
+        const row = el('div', 'item');
+        row.append(el('div', 'what', it.name));
+        if (listMode === 'wait') {
+          const b = el('button', 'act', '入荷済にする');
+          b.addEventListener('click', () => arrived(it, b));
+          row.append(b);
+          row.append(el('div', 'meta', it.time + '・' + it.who));
+        } else {
+          row.append(el('div', 'meta', '入荷 ' + it.doneTime + '・' + it.doneBy + '（記録 ' + it.time + '・' + it.who + '）'));
+        }
+        card.append(row);
+      });
+    }
+    $('list').replaceChildren(card);
+  }
+  async function load() {
+    data = null; render();
+    try {
+      const r = await api({ action: 'stock_status' });
+      if (!r.ok) { showMsg(r.message, 'ng'); return; }
+      data = r; render();
+    } catch (e) { showMsg('読み込みに失敗しました。', 'ng'); }
+  }
+  async function arrived(it, btn) {
+    if (!confirm('「' + it.name + '」を入荷済にしますか？')) return;
+    btn.disabled = true; btn.textContent = '記録中…';
+    try {
+      const r = await api({ action: 'stock_arrived', id: it.id });
+      if (!r.ok) { showMsg(r.message, 'ng'); btn.disabled = false; btn.textContent = '入荷済にする'; return; }
+      data = r; render(); showMsg(r.message, 'ok');
+    } catch (e) { showMsg('通信に失敗しました。もう一度お試しください。', 'ng'); btn.disabled = false; btn.textContent = '入荷済にする'; }
+  }
+
+  // ===== ボタン =====
+  $('tAdd').addEventListener('click', () => selectTab('add'));
+  $('tList').addEventListener('click', () => selectTab('list'));
+  $('lWait').addEventListener('click', () => { listMode = 'wait'; hideMsg(); render(); });
+  $('lDone').addEventListener('click', () => { listMode = 'done'; hideMsg(); render(); });
+  $('reload').addEventListener('click', () => { hideMsg(); load(); });
+  $('text').addEventListener('input', updateButton);
+  $('submit').addEventListener('click', submit);
+  $('again').addEventListener('click', () => { $('done').hidden = true; $('tabs').hidden = false; selectTab('add'); $('text').focus(); });
+  $('close').addEventListener('click', () => { if (liff.isInClient()) liff.closeWindow(); else window.close(); });
+
+  async function main() {
+    try {
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+      selectTab('add');
+      // 確認の件数（未入荷）を先に読んでおく
+      try { const r = await api({ action: 'stock_status' }); if (r.ok) { data = r; updateBadge(); } } catch (e) { /* なくても記録はできる */ }
+    } catch (e) {
+      showMsg('ページの準備に失敗しました。\nLINEのトーク画面から開き直してください。', 'ng');
+    }
+  }
+  main();
+</script>
+</body>
+</html>
