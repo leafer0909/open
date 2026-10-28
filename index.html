@@ -11,11 +11,10 @@
     勤務中   … 退勤時刻（今／時刻を選ぶ）を選んで退勤する
     退勤済み … 退勤時刻を直す／新しく出勤する
 
-  ■ 設定（下の2か所を書き換えてください）
-    LIFF_ID … LINE Developers の LIFF タブに表示される、出勤用の「LIFF ID」
-    GAS_URL … Apps Script のウェブアプリのURL（LINEのWebhook URLと同じもの）
+  ■ 設定 … このファイルは書き換えません。同じフォルダの config.js に GAS_URL と LIFF ID を書きます
 -->
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="config.js"></script>
 <style>
   :root { --green: #06c755; --text: #1f2328; --sub: #5b636b; --bg: #f6f7f8; --card: #fff; --red: #d1242f; --line: #d0d7de; --sel: #e7f8ee; }
   * { box-sizing: border-box; }
@@ -146,11 +145,10 @@
   </div>
 
 <script>
-  // ===== 設定 =====
-   const LIFF_ID = '2012248509-RClZWVEk';
-  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzalJEbvSnagpUa7yxwQhmnCgGLNAtLfDVdY7Um2jdXGsAgX3D6NEHGe8QjeELg1YD7/exec';
-  // ================
-
+  // ===== 設定（config.js から読む） =====
+  const CONFIG = window.APP_CONFIG || {};
+  const LIFF_ID = (CONFIG.LIFF || {}).kintai || '';
+  const GAS_URL = CONFIG.GAS_URL || '';
   // ================
 
   const $ = (id) => document.getElementById(id);
@@ -379,6 +377,7 @@
   async function main() {
     tick(); setInterval(tick, 1000);
     try {
+      if (!/^\d+-\w+$/.test(LIFF_ID) || !/^https:\/\//.test(GAS_URL)) throw new Error('config');
       await liff.init({ liffId: LIFF_ID });
       if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
       const r = await api({ action: 'kintai_status' });
@@ -388,7 +387,9 @@
       renderState();
     } catch (e) {
       $('spinner').hidden = true;
-      setStatus('ページの準備に失敗しました。\nLINEのトーク画面から開き直してください。', 'ng');
+      setStatus(e && e.message === 'config'
+        ? 'config.js が読み込めないか、設定が入っていません。\n管理者に連絡してください。'
+        : 'ページの準備に失敗しました。\nLINEのトーク画面から開き直してください。', 'ng');
     }
   }
   main();
