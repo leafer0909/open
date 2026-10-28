@@ -116,6 +116,9 @@
   .item.regi .what { color: #0b6b31; }
   .item.regi.r-close .what { color: var(--text); }
   .item.regi { background: linear-gradient(90deg, var(--sel), transparent 70%); margin: 0 -14px; padding: 11px 14px; }
+  .item.cancelled .what, .item.cancelled .amt { text-decoration: line-through; color: var(--sub); }
+  .ctag { display: inline-block; margin-left: 6px; font-size: 11.5px; font-weight: 700; color: var(--red); background: var(--red-bg); border-radius: 4px; padding: 0 5px; }
+  .cancelBtn { grid-column: 1 / -1; justify-self: end; margin-top: 6px; border: 1px solid var(--line); background: var(--card); color: var(--red); border-radius: 8px; padding: 5px 12px; font-size: 13px; font-weight: 600; }
   .empty { padding: 18px 0; text-align: center; color: var(--sub); font-size: 14px; }
   .reload { width: 100%; margin-top: 12px; border: 0; border-radius: 12px; padding: 12px; font-size: 15px; background: #e9ecef; color: var(--text); }
 
@@ -309,6 +312,7 @@
   let tab = '';                       // 開け／締め／入金／出金／確認
   const ms = { category: '', who: null, dateMode: '', date: '' };   // 入出金の入力状態
   let listMode = 'now', listData = null;
+  let moneyReqId = '';                 // 入出金の受付番号（二重記録を防ぐ）
   let salesVal = null;                // レジ締めの前に入力した売上 { cash, cashless }（Square未設定の間だけ）
   const askSales = () => tab === 'レジ締め' && conf.askSales;
 
@@ -514,6 +518,7 @@
     if (d.workDate && d.amount % (conf.wage * conf.unitMin / 60)) dl.append(el('div', 'warn', '※ ' + conf.unitMin + '分単位の金額ではありません'));
     $('moneyForm').hidden = true; $('moneyConfirm').hidden = false; $('tabs').hidden = true;
     $('moneyBack').hidden = false; $('moneyNext').textContent = '記録する';
+    moneyReqId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);   // 押し直しても同じ番号で送る
     window.scrollTo(0, 0);
   }
   function toMoneyForm() {
@@ -525,23 +530,41 @@
     if (d.error) { toMoneyForm(); showMsg(d.error, 'ng'); return; }
     $('moneyNext').disabled = true; $('moneyBack').disabled = true; $('moneyNext').textContent = '記録中…';
     try {
-      const r = await api(Object.assign({ action: 'money_submit' }, d));
+      const r = await api(Object.assign({ action: 'money_submit', requestId: moneyReqId }, d));
       if (!r.ok) { showMsg(r.message, 'ng'); $('moneyNext').textContent = '記録する'; return; }
-      finished(r.message, r.chat || r.message, d.kind + 'を記録しました');
+      // r.duplicate … 前回の送信がすでに記録されていた（トークにも重ねて送らない）
+      finished(r.message, r.duplicate ? '' : (r.chat || r.message), r.duplicate ? '記録済みです' : d.kind + 'を記録しました');
     } catch (e) {
       showMsg('通信に失敗しました。もう一度お試しください。', 'ng'); $('moneyNext').textContent = '記録する';
     } finally { $('moneyNext').disabled = false; $('moneyBack').disabled = false; }
   }
 
   // ===== 確認（今の営業／過去1週間） =====
-  function itemRow(it) {
+  function itemRow(it, canCancel) {
     const isRegi = it.type === 'open' || it.type === 'close';
-    const row = el('div', 'item' + (isRegi ? ' regi r-' + it.type : ''));
+    const row = el('div', 'item' + (isRegi ? ' regi r-' + it.type : '') + (it.cancelled ? ' cancelled' : ''));
     row.append(el('div', 'what', it.label));
     const amt = el('div', 'amt' + (it.type === 'in' ? ' in' : it.type === 'out' ? ' out' : ''));
     amt.textContent = it.type === 'in' ? '+' + it.amount.toLocaleString('ja-JP') : it.type === 'out' ? '−' + it.amount.toLocaleString('ja-JP') : yen(it.amount);
-    row.append(amt, el('div', 'meta', it.time + '・' + it.name + (it.note ? '・' + it.note : '')));
+    const meta = el('div', 'meta', it.time + '・' + it.name + (it.note ? '・' + it.note : ''));
+    if (it.cancelled) meta.append(el('span', 'ctag', '取消' + (it.cancelBy ? '（' + it.cancelBy + '）' : '')));
+    row.append(amt, meta);
+    if (canCancel && it.cancellable) {
+      const b = el('button', 'cancelBtn', '取り消す');
+      b.addEventListener('click', () => cancelMoney(it, b));
+      row.append(b);
+    }
     return row;
+  }
+  async function cancelMoney(it, btn) {
+    if (!confirm('「' + it.label + ' ' + yen(it.amount) + '」（' + it.time + '・' + it.name + '）を取り消しますか？')) return;
+    btn.disabled = true; btn.textContent = '取消中…';
+    try {
+      const r = await api({ action: 'money_cancel', id: it.id });
+      if (!r.ok) { showMsg(r.message, 'ng'); btn.disabled = false; btn.textContent = '取り消す'; return; }
+      listData = r; renderList(); showMsg(r.message, 'ok');
+      if (liff.isInClient() && r.chat) { try { await liff.sendMessages([{ type: 'text', text: r.chat }]); } catch (e) { console.warn(e); } }
+    } catch (e) { showMsg('通信に失敗しました。最新の状態にして確かめてください。', 'ng'); btn.disabled = false; btn.textContent = '取り消す'; }
   }
   function renderList() {
     $('lNow').classList.toggle('on', listMode === 'now');
@@ -552,7 +575,7 @@
     if (listMode === 'now') {
       const card = el('div', 'list');
       if (!listData.current.length) card.append(el('div', 'empty', 'レジの記録がまだありません。'));
-      listData.current.forEach((it) => card.append(itemRow(it)));
+      listData.current.forEach((it) => card.append(itemRow(it, true)));
       if (listData.current.length === 1) card.append(el('div', 'empty', (listData.current[0].type === 'open' ? '開け' : '締め') + 'のあとの入出金はまだありません。'));
       box.append(card);
     } else {
@@ -590,7 +613,7 @@
     $('done').hidden = false;
     window.scrollTo(0, 0);
     // トークにも記録を残す（レジ用LIFFに chat_message.write の権限が必要）
-    if (liff.isInClient()) {
+    if (liff.isInClient() && chatText) {
       try { await liff.sendMessages([{ type: 'text', text: chatText }]); } catch (e) { console.warn(e); }
     }
   }
