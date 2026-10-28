@@ -36,7 +36,7 @@
   .label { font-size: 13px; color: var(--sub); font-weight: 600; margin-bottom: 8px; }
 
   /* 入金／出金の切り替え */
-  .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--bg); border-radius: 10px; padding: 3px; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--bg); border-radius: 10px; padding: 3px; }
   .seg button { border: 0; background: none; padding: 10px; font-size: 16px; font-weight: 700; border-radius: 8px; color: var(--sub); }
   .seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 
@@ -71,6 +71,22 @@
   .msg.ok { background: var(--ok-bg); color: #0b6b31; }
   .msg.ng { background: var(--red-bg); color: var(--red); }
 
+  /* 確認（一覧） */
+  .regi { margin: 2px 0 10px; }
+  .regi .badge { display: inline-block; font-size: 14px; font-weight: 700; border-radius: 999px; padding: 5px 14px; }
+  .regi .badge.open { background: var(--sel); color: #0b6b31; }
+  .regi .badge.closed { background: #e9ecef; color: var(--sub); }
+  .list { background: var(--card); border-radius: 14px; padding: 4px 14px; }
+  .item { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+  .item:last-child { border-bottom: 0; }
+  .item .what { font-weight: 600; font-size: 15px; min-width: 0; }
+  .item .amt { font-weight: 700; font-size: 16px; font-variant-numeric: tabular-nums; text-align: right; }
+  .item .amt.in { color: #0b8a43; }
+  .item .amt.out { color: var(--red); }
+  .item .meta { grid-column: 1 / -1; font-size: 12.5px; color: var(--sub); }
+  .empty { padding: 18px 0; text-align: center; color: var(--sub); font-size: 14px; }
+  .reload { width: 100%; margin-top: 12px; border: 0; border-radius: 12px; padding: 12px; font-size: 15px; background: #e9ecef; color: var(--text); }
+
   .bar {
     position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
     padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
@@ -93,6 +109,7 @@
         <div class="seg" role="tablist">
           <button id="kIn" data-kind="入金">入金</button>
           <button id="kOut" data-kind="出金" class="on">出金</button>
+          <button id="kList">確認</button>
         </div>
       </div>
 
@@ -130,6 +147,13 @@
     <div id="msg" class="msg hidden"></div>
   </section>
 
+  <!-- 確認（今の入出金一覧） -->
+  <section id="listView" class="hidden">
+    <div class="regi" id="regiBox">読み込み中…</div>
+    <div class="list" id="list"></div>
+    <button class="reload" id="reload">最新の状態にする</button>
+  </section>
+
   <!-- 確認 -->
   <section id="confirm" class="hidden">
     <div class="confirm">
@@ -149,7 +173,7 @@
 
 <script>
   // ===== 設定 =====
-  const LIFF_ID = '2012248509-AB4Y5XGj';
+   const LIFF_ID = '2012248509-AB4Y5XGj';
   const GAS_URL = 'https://script.google.com/macros/s/AKfycbzalJEbvSnagpUa7yxwQhmnCgGLNAtLfDVdY7Um2jdXGsAgX3D6NEHGe8QjeELg1YD7/exec';
   // ================
 
@@ -188,6 +212,14 @@
   function render() {
     $('kIn').classList.toggle('on', st.kind === '入金');
     $('kOut').classList.toggle('on', st.kind === '出金');
+    $('kList').classList.toggle('on', st.kind === '確認');
+    // 「確認」のときは入力欄と下のボタンを隠して一覧を出す
+    const listMode = st.kind === '確認';
+    document.querySelectorAll('#form .field').forEach((f, i) => { if (i > 0) f.classList.toggle('hidden', listMode); });
+    $('listView').classList.toggle('hidden', !listMode);
+    $('bar').classList.toggle('hidden', listMode);
+    $('msg').classList.add('hidden');
+    if (listMode) return;
     const isOut = st.kind === '出金';
     const isSalary = isOut && st.category === SALARY;
     $('fCategory').classList.toggle('hidden', !isOut);
@@ -311,6 +343,40 @@
     }
   }
 
+  async function loadList() {
+    $('regiBox').textContent = '読み込み中…';
+    $('list').innerHTML = '';
+    try {
+      const r = await api({ action: 'money_list' });
+      if (!r.ok) { $('regiBox').textContent = r.message; return; }
+      // 状態（レジ開け中／レジ締め後）だけを表示
+      const box = $('regiBox');
+      box.innerHTML = '';
+      const badge = document.createElement('span');
+      if (r.regi && r.regi.kind === 'レジ開け') { badge.className = 'badge open'; badge.textContent = 'レジ開け中'; }
+      else if (r.regi) { badge.className = 'badge closed'; badge.textContent = 'レジ締め後'; }
+      else { badge.className = 'badge closed'; badge.textContent = 'レジの記録なし'; }
+      box.append(badge);
+
+      if (!r.items.length) { $('list').innerHTML = '<div class="empty">' + (r.regi ? (r.regi.kind === 'レジ開け' ? '開け' : '締め') + 'のあとの入出金はまだありません。' : '入出金はありません。') + '</div>'; return; }
+      r.items.forEach((it) => {
+        const row = document.createElement('div'); row.className = 'item';
+        const what = document.createElement('div'); what.className = 'what';
+        what.textContent = it.kind + (it.category ? '・' + it.category : '') + (it.recipient ? '（' + it.recipient + (it.workDate ? '・' + it.workDate + '勤務' : '') + '）' : '');
+        const amt = document.createElement('div'); amt.className = 'amt ' + (it.kind === '入金' ? 'in' : 'out');
+        amt.textContent = (it.kind === '入金' ? '+' : '−') + it.amount.toLocaleString('ja-JP');
+        const meta = document.createElement('div'); meta.className = 'meta';
+        meta.textContent = it.time + '・' + it.name + (it.memo ? '・' + it.memo : '');
+        row.append(what, amt, meta);
+        $('list').append(row);
+      });
+    } catch (e) {
+      $('regiBox').textContent = '読み込みに失敗しました。「最新の状態にする」を押してください。';
+    }
+  }
+
+  $('kList').addEventListener('click', () => { st.kind = '確認'; render(); loadList(); });
+  $('reload').addEventListener('click', loadList);
   $('kIn').addEventListener('click', () => { st.kind = '入金'; render(); });
   $('kOut').addEventListener('click', () => { st.kind = '出金'; render(); });
   $('amount').addEventListener('input', () => {
