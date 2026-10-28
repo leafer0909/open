@@ -9,9 +9,9 @@
   開け/締めを選び、金種ごとの枚数を入力して送信します。合計は自動計算。
   開けは前回の締めと比べ、結果は送信後に表示します（ブラインドチェック）。
 
-  ■ 設定（index.html と同じ値を入れてください）
-    LIFF_ID … LINE Developers の LIFF タブに表示される「LIFF ID」
-    GAS_URL … Apps Script のウェブアプリのURL
+  ■ 設定
+    LIFF_ID … レジ用に追加したLIFFの「LIFF ID」（出勤ページとは別のID）
+    GAS_URL … Apps Script のウェブアプリのURL（index.html と同じ）
 -->
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <style>
@@ -73,6 +73,22 @@
   .total b { font-size: 26px; font-variant-numeric: tabular-nums; }
   .primary { border: 0; border-radius: 12px; padding: 14px 22px; font-size: 17px; font-weight: 700; background: var(--green); color: #fff; }
   .primary:disabled { opacity: .5; }
+  /* 締めの確認画面 */
+  .confirm { background: var(--card); border-radius: 12px; padding: 16px; margin-top: 14px; }
+  .confirm .line { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; font-variant-numeric: tabular-nums; }
+  .confirm .line > span { color: var(--sub); }
+  .confirm .line b { font-size: 20px; }
+  .confirm .diff { font-size: 15px; font-weight: 700; margin-left: 6px; }
+  .confirm .diff.minus { color: var(--red); }
+  .confirm .diff.plus { color: #b26a00; }
+  .confirm .gap { height: 10px; }
+  .confirm .note { color: var(--sub); font-size: 13px; margin-top: 6px; white-space: pre-line; }
+  .confirm .q { font-weight: 700; margin: 14px 0 10px; }
+  .confirm .btns { display: grid; gap: 10px; }
+  .confirm .btns button { border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; }
+  .btn-yes { background: var(--green); color: #fff; }
+  .btn-memo { background: #e8f0fe; color: #1a56c4; }
+  .btn-cancel { background: #e9ecef; color: var(--text); }
   .close { width: 100%; margin-top: 14px; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; background: #e9ecef; color: var(--text); }
 </style>
 </head>
@@ -99,6 +115,22 @@
     <div id="reasonBox" class="hidden">
       <textarea id="reason" placeholder="合わない理由（例: 両替した、数え間違い など）"></textarea>
     </div>
+    <div class="confirm hidden" id="confirm">
+      <div class="line"><span>レジ締め金額</span><b id="cfClose"></b></div>
+      <div class="line"><span>予想レジ金額</span><b><span id="cfExpected"></span><span class="diff" id="cfDiff"></span></b></div>
+      <div class="gap"></div>
+      <div class="line"><span>現金売上（Square入力分）</span><b id="cfSquare"></b></div>
+      <div class="note" id="cfNote"></div>
+      <div class="q">これで良いですか？</div>
+      <div id="cfMemoBox" class="hidden">
+        <textarea id="cfMemo" placeholder="メモ（例: 両替で1,000円札を補充した など）"></textarea>
+      </div>
+      <div class="btns">
+        <button class="btn-yes" id="cfYes">はい</button>
+        <button class="btn-memo" id="cfMemoBtn">メモを加える</button>
+        <button class="btn-cancel" id="cfCancel">キャンセル</button>
+      </div>
+    </div>
     <button class="close hidden" id="close">閉じる</button>
   </section>
 </div>
@@ -112,7 +144,7 @@
 
 <script>
   // ===== 設定 =====
-  const LIFF_ID = '2012248509-1uERInyy';
+ const LIFF_ID = '2012248509-1uERInyy';
   const GAS_URL = 'https://script.google.com/macros/s/AKfycbzalJEbvSnagpUa7yxwQhmnCgGLNAtLfDVdY7Um2jdXGsAgX3D6NEHGe8QjeELg1YD7/exec';
   // ================
 
@@ -185,28 +217,77 @@
     const reason = $('reason').value.trim();
     if (needReason && !reason) { showMsg('合わない理由を入力してください。', 'ng'); $('reason').focus(); return; }
 
-    $('submit').disabled = true; $('submit').textContent = '送信中…';
+    $('submit').disabled = true;
+    $('submit').textContent = kind === 'レジ締め' ? 'Squareの売上を確認中…' : '送信中…';
     try {
       const data = await api({ action: 'regi_submit', kind: kind, counts: c, reason: needReason ? reason : '' });
-      if (data.ok) {
-        showMsg(data.message, 'ok');
-        $('bar').classList.add('hidden');
-        $('reasonBox').classList.add('hidden');
-        $('back').classList.add('hidden');
-        document.querySelectorAll('#table input').forEach((el) => (el.disabled = true));
-        $('close').classList.remove('hidden');
+      if (data.ok && data.preview) {
+        showConfirm(data);
+      } else if (data.ok) {
+        finished(data.message);
       } else {
         showMsg(data.message, 'ng');
         if (data.needReason) { $('reasonBox').classList.remove('hidden'); $('submit').textContent = '理由を付けて記録'; }
         else if (data.recount) { $('submit').textContent = '数え直して送信'; }
         else { $('submit').textContent = '送信する'; }
       }
-      $('msg').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (!data.preview) $('msg').scrollIntoView({ behavior: 'smooth', block: 'center' });
     } catch (e) {
       showMsg('通信に失敗しました。もう一度お試しください。', 'ng');
       $('submit').textContent = '送信する';
     } finally {
       $('submit').disabled = false;
+    }
+  }
+
+  function finished(message) {
+    showMsg(message, 'ok');
+    $('bar').classList.add('hidden');
+    $('reasonBox').classList.add('hidden');
+    $('confirm').classList.add('hidden');
+    $('back').classList.add('hidden');
+    document.querySelectorAll('#table input').forEach((el) => (el.disabled = true));
+    $('close').classList.remove('hidden');
+  }
+
+  // レジ締めの確認画面
+  function showConfirm(d) {
+    $('msg').classList.add('hidden');
+    $('bar').classList.add('hidden');
+    document.querySelectorAll('#table input').forEach((el) => (el.disabled = true));
+    $('cfClose').textContent = yen(d.closeTotal);
+    if (d.expected !== null && d.expected !== undefined) {
+      $('cfExpected').textContent = yen(d.expected);
+      const diff = d.diff;
+      $('cfDiff').textContent = '（' + (diff > 0 ? '+' : diff < 0 ? '−' : '±') + Math.abs(diff).toLocaleString('ja-JP') + '）';
+      $('cfDiff').className = 'diff ' + (diff < 0 ? 'minus' : diff > 0 ? 'plus' : '');
+    } else {
+      $('cfExpected').textContent = '—'; $('cfDiff').textContent = '';
+    }
+    $('cfSquare').textContent = (d.square !== null && d.square !== undefined) ? yen(d.square) : '—';
+    $('cfNote').textContent = d.note || (d.squareError ? 'Squareの売上を取得できませんでした。このまま記録して、あとで取り直すことができます。' : '');
+    $('cfMemoBox').classList.add('hidden');
+    $('cfMemoBtn').classList.remove('hidden');
+    $('cfYes').textContent = 'はい';
+    $('confirm').classList.remove('hidden');
+    $('confirm').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function confirmClose() {
+    const memoOpen = !$('cfMemoBox').classList.contains('hidden');
+    const memo = memoOpen ? $('cfMemo').value.trim() : '';
+    if (memoOpen && !memo) { $('cfMemo').focus(); return; }
+    ['cfYes', 'cfMemoBtn', 'cfCancel'].forEach((id) => ($(id).disabled = true));
+    $('cfYes').textContent = '記録中…';
+    try {
+      const data = await api({ action: 'regi_submit', kind: 'レジ締め', counts: counts(), confirm: true, memo: memo });
+      if (data.ok) finished(data.message);
+      else { showMsg(data.message, 'ng'); $('cfYes').textContent = memoOpen ? 'メモを付けて記録' : 'はい'; }
+    } catch (e) {
+      showMsg('通信に失敗しました。もう一度お試しください。', 'ng');
+      $('cfYes').textContent = memoOpen ? 'メモを付けて記録' : 'はい';
+    } finally {
+      ['cfYes', 'cfMemoBtn', 'cfCancel'].forEach((id) => ($(id).disabled = false));
     }
   }
 
@@ -234,8 +315,24 @@
     $('step2').classList.add('hidden'); $('bar').classList.add('hidden'); $('step1').classList.remove('hidden');
   });
   $('submit').addEventListener('click', submit);
+  $('cfYes').addEventListener('click', confirmClose);
+  $('cfMemoBtn').addEventListener('click', () => {
+    $('cfMemoBox').classList.remove('hidden');
+    $('cfMemoBtn').classList.add('hidden');
+    $('cfYes').textContent = 'メモを付けて記録';
+    $('cfMemo').focus();
+  });
+  $('cfCancel').addEventListener('click', () => {
+    // 記録せずに入力画面へ戻る（枚数は残す）
+    $('confirm').classList.add('hidden');
+    $('bar').classList.remove('hidden');
+    document.querySelectorAll('#table input').forEach((el) => (el.disabled = false));
+    $('submit').textContent = '送信する';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
   $('close').addEventListener('click', () => { if (liff.isInClient()) liff.closeWindow(); else window.close(); });
   main();
 </script>
 </body>
 </html>
+
