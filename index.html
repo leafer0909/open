@@ -36,6 +36,10 @@
     background: var(--green); color: #fff; cursor: pointer;
   }
   button.sub { background: #e9ecef; color: var(--text); margin-top: 12px; font-weight: 500; }
+  [hidden] { display: none !important; }
+  .choices { display: grid; gap: 10px; margin: 4px 0 4px; }
+  .choices button { background: #fff; color: var(--text); border: 1.5px solid #d0d7de; font-size: 16px; padding: 14px; text-align: left; }
+  .choices button small { display: block; font-size: 12.5px; color: var(--sub); font-weight: 400; margin-top: 2px; }
   button:disabled { opacity: .5; }
   .spinner {
     width: 28px; height: 28px; margin: 8px auto; border: 3px solid #dfe3e6; border-top-color: var(--green);
@@ -51,6 +55,11 @@
     <div class="date" id="date"></div>
     <div class="spinner" id="spinner"></div>
     <div class="status" id="status">準備中…</div>
+    <div class="choices" id="choices" hidden>
+      <button data-mode="keep" id="cKeep"></button>
+      <button data-mode="replace" id="cReplace"></button>
+      <button data-mode="new" id="cNew">前回の退勤を押し忘れた<small>新しく出勤として記録します</small></button>
+    </div>
     <button id="checkin" disabled>出勤する</button>
     <button id="close" class="sub">閉じる</button>
   </div>
@@ -88,41 +97,68 @@
     });
   }
 
+  let lastPos = null;
+
   async function checkin() {
     busy(true);
     try {
       setStatus('現在地を確認しています…');
-      const pos = await getPosition();
-
-      setStatus('記録しています…');
-      const res = await fetch(GAS_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'liff_checkin',
-          idToken: liff.getIDToken(),
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy
-        })
-      });
-      const data = await res.json();
-      setStatus(data.message || '記録しました。', data.ok ? 'ok' : 'ng');
-      if (data.ok) {
-           $('checkin').style.display = 'none';
-           // トークに「出勤しました」を送る（選択ボタンが消える）→ ページを自動で閉じる
-           if (liff.isInClient()) {
-             const t = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-             try { await liff.sendMessages([{ type: 'text', text: '出勤しました（' + t + '）' }]); } catch (e) { console.warn(e); }
-             setTimeout(() => liff.closeWindow(), 1000);
-           }
-         }
+      lastPos = await getPosition();
+      await send('');
     } catch (e) {
       setStatus(e.message || '通信に失敗しました。もう一度お試しください。', 'ng');
     } finally {
       busy(false);
     }
   }
+
+  // mode: '' 通常 ／ keep そのまま ／ replace 出勤し直す ／ new 前回の退勤を押し忘れた
+  async function send(mode) {
+    setStatus('記録しています…');
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'liff_checkin',
+        idToken: liff.getIDToken(),
+        lat: lastPos.coords.latitude,
+        lng: lastPos.coords.longitude,
+        accuracy: lastPos.coords.accuracy,
+        mode: mode
+      })
+    });
+    const data = await res.json();
+
+    // すでに出勤している → 選んでもらう
+    if (data.duplicate) {
+      setStatus(data.message, 'ng');
+      $('cKeep').innerHTML = data.prev.split(' ')[1] + ' の出勤のままにする<small>二度押ししたときはこちら（記録しません）</small>';
+      $('cReplace').innerHTML = '今（' + data.now + '）に出勤し直す<small>' + data.prev.split(' ')[1] + ' の出勤を今の時刻に書き換えます</small>';
+      $('choices').hidden = false;
+      $('checkin').style.display = 'none';
+      return;
+    }
+    $('choices').hidden = true;
+    setStatus(data.message || '記録しました。', data.ok ? 'ok' : 'ng');
+    if (data.ok) {
+      $('checkin').style.display = 'none';
+      // トークにメッセージを送る（選択ボタンが消える）→ ページを自動で閉じる
+      if (liff.isInClient()) {
+        const t = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+        try { await liff.sendMessages([{ type: 'text', text: data.chat || ('出勤しました（' + t + '）') }]); } catch (e) { console.warn(e); }
+        setTimeout(() => liff.closeWindow(), 1500);
+      }
+    } else {
+      $('checkin').style.display = '';
+    }
+  }
+
+  document.querySelectorAll('#choices button').forEach((b) => b.addEventListener('click', async () => {
+    document.querySelectorAll('#choices button').forEach((x) => (x.disabled = true));
+    try { await send(b.dataset.mode); }
+    catch (e) { setStatus('通信に失敗しました。もう一度お試しください。', 'ng'); }
+    finally { document.querySelectorAll('#choices button').forEach((x) => (x.disabled = false)); }
+  }));
 
   async function main() {
     try {
