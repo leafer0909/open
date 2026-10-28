@@ -3,11 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>発注買出し</title>
+<title>レジ</title>
 <!--
-  LINE 発注買出しページ（LIFF）
-    [在庫切れ] … 1行に1品を自由に書いて記録（「在庫切れ」シートに1品1行・未入荷）
-    [確認]     … 未入荷（すべて）／入荷済（過去1週間）を切り替えて表示。［入荷済にする］は誰でも押せる
+  LINE レジページ（LIFF）
+  レジの開け・締めと、入金・出金（給料を含む）、その確認を1つのページで行います。
+  開いたときにレジの状態（開け中／締め後）を表示し、状態に合わせてボタンの並びを変えます。
+    開け中 … [出金][入金][レジ締め][確認]
+    締め後 … [レジ開け][入金][出金][確認]
 
   ■ 設定 … このファイルは書き換えません。同じフォルダの config.js に GAS_URL と LIFF ID を書きます
 -->
@@ -16,78 +18,205 @@
 <style>
   :root {
     --green: #06c755; --text: #1f2328; --sub: #5b636b; --line: #e3e6e8;
-    --bg: #f6f7f8; --card: #fff; --red: #d1242f; --red-bg: #fff1f0; --ok-bg: #effaf3; --sel: #e7f8ee;
+    --bg: #f6f7f8; --card: #fff; --red: #d1242f; --red-bg: #fff1f0; --ok-bg: #effaf3;
+    --warn: #9a5b00; --warn-bg: #fff6e5; --sel: #e7f8ee;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html, body { margin: 0; background: var(--bg); color: var(--text); }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
-    padding: 16px 16px calc(110px + env(safe-area-inset-bottom));
+    padding: 16px 16px calc(120px + env(safe-area-inset-bottom));
   }
   .wrap { max-width: 440px; margin: 0 auto; }
-  h1 { font-size: 20px; margin: 4px 0 12px; }
-  .muted { color: var(--sub); font-size: 13.5px; margin: 10px 2px 0; line-height: 1.6; }
+  .head { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  .badge { font-size: 13px; font-weight: 700; border-radius: 999px; padding: 4px 12px; }
+  .badge.st-open { background: var(--sel); color: #0b6b31; }
+  .badge.st-close, .badge.st-none { background: #e9ecef; color: var(--sub); }
+  .muted { color: var(--sub); font-size: 14px; margin: 0 0 12px; }
   button { font-family: inherit; }
   button:disabled { opacity: .5; }
 
-  .seg { display: grid; grid-template-columns: 1fr 1fr; background: #eceef0; border-radius: 10px; padding: 3px; margin-bottom: 14px; }
-  .seg button { border: 0; background: none; padding: 10px 2px; font-size: 15px; font-weight: 700; border-radius: 8px; color: var(--sub); }
+  /* タブ */
+  .seg { display: grid; grid-template-columns: repeat(4, 1fr); background: #eceef0; border-radius: 10px; padding: 3px; margin-bottom: 14px; }
+  .seg.two { grid-template-columns: 1fr 1fr; }
+  .seg button { border: 0; background: none; padding: 10px 2px; font-size: 15px; white-space: nowrap; font-weight: 700; border-radius: 8px; color: var(--sub); }
   .seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
-  .seg button .n { display: inline-block; min-width: 18px; margin-left: 4px; padding: 0 5px; border-radius: 999px; background: var(--red); color: #fff; font-size: 11.5px; line-height: 18px; }
 
-  .label { font-size: 13px; color: var(--sub); font-weight: 600; margin: 0 2px 8px; }
-  textarea {
-    width: 100%; min-height: 220px; font-size: 17px; line-height: 1.7; padding: 12px 14px; border: 1px solid var(--line);
-    border-radius: 14px; background: var(--card); color: var(--text); font-family: inherit; resize: vertical;
+  /* 金種入力 */
+  .table { background: var(--card); border-radius: 12px; overflow: hidden; }
+  .row { display: grid; grid-template-columns: 84px 1fr 104px; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .row label { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .row input {
+    width: 100%; font-size: 20px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    text-align: right; font-variant-numeric: tabular-nums; background: #fbfbfc;
   }
-  textarea:focus { outline: 2px solid var(--green); border-color: var(--green); }
+  .row input:focus { outline: 2px solid var(--green); border-color: var(--green); background: #fff; }
+  .row .subt { text-align: right; color: var(--sub); font-variant-numeric: tabular-nums; font-size: 15px; }
 
+  /* 入出金の入力 */
   .card { background: var(--card); border-radius: 14px; padding: 4px 14px; }
-  .item { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 11px 0; border-bottom: 1px solid var(--line); align-items: center; }
+  .field { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .field:last-child { border-bottom: 0; }
+  .label { font-size: 13px; color: var(--sub); font-weight: 600; margin-bottom: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { border: 1.5px solid var(--line); background: var(--card); border-radius: 999px; padding: 7px 14px; font-size: 15px; color: var(--text); }
+  .chip.on { border-color: var(--green); background: var(--sel); font-weight: 700; }
+  input[type=text], input[type=date], textarea {
+    width: 100%; font-size: 17px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfbfc; color: var(--text); font-family: inherit;
+  }
+  input:focus, textarea:focus { outline: 2px solid var(--green); border-color: var(--green); background: #fff; }
+  textarea { min-height: 70px; resize: vertical; }
+  .amount { display: flex; align-items: center; gap: 8px; }
+  .amount input { font-size: 22px; text-align: right; font-variant-numeric: tabular-nums; }
+  .amount span { font-size: 17px; font-weight: 700; }
+  .calc { margin-top: 8px; font-size: 14px; color: var(--sub); }
+  .calc b { color: var(--text); }
+  .calc .warn { color: var(--warn); display: block; margin-top: 2px; }
+  .other { margin-top: 8px; }
+
+  /* 確認画面（入出金） */
+  .sheet { background: var(--card); border-radius: 14px; padding: 16px; }
+  .sheet h2 { font-size: 17px; margin: 0 0 10px; }
+  .sheet dl { display: grid; grid-template-columns: 6em 1fr; gap: 6px 10px; margin: 0; font-size: 15px; }
+  .sheet dt { color: var(--sub); }
+  .sheet dd { margin: 0; font-weight: 600; word-break: break-all; }
+  .sheet .warn { grid-column: 1 / -1; color: var(--warn); background: var(--warn-bg); border-radius: 8px; padding: 6px 10px; font-size: 13px; font-weight: 600; }
+
+  /* 締めの確認画面 */
+  .cf { background: var(--card); border-radius: 12px; padding: 16px; margin-top: 14px; }
+  .cf .line { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; font-variant-numeric: tabular-nums; }
+  .cf .line > span { color: var(--sub); }
+  .cf .line b { font-size: 20px; }
+  .cf .diff { font-size: 15px; font-weight: 700; margin-left: 6px; }
+  .cf .diff.minus { color: var(--red); }
+  .cf .diff.plus { color: #b26a00; }
+  .cf .gap { height: 10px; }
+  .cf .note { color: var(--sub); font-size: 13px; margin-top: 6px; white-space: pre-line; }
+  .cf .q { font-weight: 700; margin: 14px 0 10px; }
+  .cf .btns { display: grid; gap: 10px; }
+  .cf .btns button { border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; }
+  .btn-yes { background: var(--green); color: #fff; }
+  .btn-memo { background: #e8f0fe; color: #1a56c4; }
+  .btn-cancel { background: #e9ecef; color: var(--text); }
+
+  /* 一覧 */
+  .list { background: var(--card); border-radius: 14px; padding: 4px 14px; }
+  .group + .group { margin-top: 12px; }
+  .glabel { font-size: 12.5px; color: var(--sub); font-weight: 700; margin: 0 2px 6px; }
+  .item { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 11px 0; border-bottom: 1px solid var(--line); }
   .item:last-child { border-bottom: 0; }
-  .item .what { font-weight: 600; font-size: 15.5px; min-width: 0; word-break: break-all; }
-  .item .meta { grid-column: 1; font-size: 12.5px; color: var(--sub); }
-  .item .act { grid-row: 1 / span 2; grid-column: 2; border: 1.5px solid var(--green); background: var(--card); color: #0b6b31; border-radius: 8px; padding: 7px 10px; font-size: 13px; font-weight: 700; }
+  .item .what { font-weight: 600; font-size: 15px; min-width: 0; }
+  .item .amt { font-weight: 700; font-size: 16px; font-variant-numeric: tabular-nums; text-align: right; }
+  .item .amt.in { color: #0b8a43; }
+  .item .amt.out { color: var(--red); }
+  .item .meta { grid-column: 1 / -1; font-size: 12.5px; color: var(--sub); }
+  .item.regi .what { color: #0b6b31; }
+  .item.regi.r-close .what { color: var(--text); }
+  .item.regi { background: linear-gradient(90deg, var(--sel), transparent 70%); margin: 0 -14px; padding: 11px 14px; }
   .empty { padding: 18px 0; text-align: center; color: var(--sub); font-size: 14px; }
   .reload { width: 100%; margin-top: 12px; border: 0; border-radius: 12px; padding: 12px; font-size: 15px; background: #e9ecef; color: var(--text); }
 
-  .msg { white-space: pre-line; line-height: 1.6; border-radius: 12px; padding: 12px 14px; margin-top: 12px; background: var(--card); }
+  .msg { white-space: pre-line; line-height: 1.6; border-radius: 12px; padding: 14px; margin-top: 14px; background: var(--card); }
   .msg.ok { background: var(--ok-bg); color: #0b6b31; }
   .msg.ng { background: var(--red-bg); color: var(--red); }
-
+  /* 完了画面 */
   .done { background: var(--card); border-radius: 16px; padding: 26px 18px 18px; text-align: center; }
   .done .mark { width: 56px; height: 56px; border-radius: 50%; background: var(--green); color: #fff; font-size: 30px; line-height: 56px; margin: 0 auto 10px; font-weight: 700; }
   .done h2 { font-size: 20px; margin: 0 0 12px; }
   .done .detail { white-space: pre-line; line-height: 1.7; text-align: left; background: var(--bg); border-radius: 12px; padding: 12px 14px; font-size: 15px; }
+  .done .time { color: var(--sub); font-size: 13px; margin-top: 10px; }
   .done .btns { display: grid; gap: 10px; margin-top: 16px; }
   .done .again { border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; background: var(--green); color: #fff; }
-  .done .close { border: 0; border-radius: 12px; padding: 14px; font-size: 16px; background: #e9ecef; color: var(--text); }
+  .close { width: 100%; margin-top: 14px; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; background: #e9ecef; color: var(--text); }
 
-  .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
-  .bar .inner { max-width: 440px; margin: 0 auto; }
-  .primary { width: 100%; border: 0; border-radius: 12px; padding: 15px 18px; font-size: 17px; font-weight: 700; background: var(--green); color: #fff; }
+  /* 下に固定のボタン */
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .bar .inner { max-width: 440px; margin: 0 auto; display: flex; align-items: center; gap: 10px; }
+  .total { flex: 1; }
+  .total small { display: block; color: var(--sub); font-size: 12px; }
+  .total b { font-size: 26px; font-variant-numeric: tabular-nums; }
+  .primary { flex: 2; border: 0; border-radius: 12px; padding: 14px 18px; font-size: 17px; font-weight: 700; background: var(--green); color: #fff; }
+  .secondary { flex: 1; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; background: #e9ecef; color: var(--text); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>発注買出し</h1>
-  <div class="seg" id="tabs">
-    <button class="on" id="tAdd">在庫切れ</button>
-    <button id="tList">確認</button>
+  <div class="head">
+    <h1>レジ</h1>
+    <span class="badge st-none" id="badge">読み込み中…</span>
   </div>
+  <div class="seg" id="tabs"></div>
 
-  <!-- 在庫切れ -->
-  <section id="vAdd">
-    <div class="label">なくなった品を、1行に1品ずつ書いてください</div>
-    <textarea id="text" placeholder="例）&#10;レモン&#10;氷&#10;おしぼり"></textarea>
+  <!-- 開け・締め：金種入力 -->
+  <section id="vCount" hidden>
+    <p class="muted">金種ごとの枚数を入力してください。</p>
+    <div class="table" id="table"></div>
+    <div id="reasonBox" hidden>
+      <textarea id="reason" placeholder="合わない理由（例: 両替した、数え間違い など）" style="margin-top:10px"></textarea>
+    </div>
+    <div class="cf" id="cf" hidden>
+      <div class="line"><span>レジ締め金額</span><b id="cfClose"></b></div>
+      <div class="line"><span>予想レジ金額</span><b><span id="cfExpected"></span><span class="diff" id="cfDiff"></span></b></div>
+      <div class="gap"></div>
+      <div class="line"><span>現金売上（Square入力分）</span><b id="cfSquare"></b></div>
+      <div class="note" id="cfNote"></div>
+      <div class="q">これで良いですか？</div>
+      <div id="cfMemoBox" hidden><textarea id="cfMemo" placeholder="メモ（例: 両替で1,000円札を補充した など）"></textarea></div>
+      <div class="btns">
+        <button class="btn-yes" id="cfYes">はい</button>
+        <button class="btn-memo" id="cfMemoBtn">メモを加える</button>
+        <button class="btn-cancel" id="cfCancel">キャンセル</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 入金・出金 -->
+  <section id="vMoney" hidden>
+    <div class="card" id="moneyForm">
+      <div class="field" id="fCategory">
+        <div class="label">科目</div>
+        <div class="chips" id="categories"></div>
+      </div>
+      <div class="field" id="fWho" hidden>
+        <div class="label">誰の給料ですか？</div>
+        <div class="chips" id="staff"></div>
+        <input type="text" id="otherName" class="other" placeholder="受け取る人の名前" hidden>
+      </div>
+      <div class="field" id="fDate" hidden>
+        <div class="label">勤務日</div>
+        <div class="chips" id="dateChips"></div>
+        <input type="date" id="workDate" class="other" hidden>
+      </div>
+      <div class="field">
+        <div class="label">金額</div>
+        <div class="amount">
+          <input type="text" id="amount" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off">
+          <span>円</span>
+        </div>
+        <div class="calc" id="calc" hidden></div>
+      </div>
+      <div class="field">
+        <div class="label">メモ（任意）</div>
+        <textarea id="memo" placeholder="例: 野菜・果物、両替用 など"></textarea>
+      </div>
+    </div>
+    <div class="sheet" id="moneyConfirm" hidden>
+      <h2>この内容で記録しますか？</h2>
+      <dl id="summary"></dl>
+    </div>
   </section>
 
   <!-- 確認 -->
   <section id="vList" hidden>
-    <div class="seg">
-      <button class="on" id="lWait">未入荷</button>
-      <button id="lDone">入荷済</button>
+    <div class="seg two">
+      <button class="on" id="lNow">今の営業</button>
+      <button id="lWeek">過去1週間</button>
     </div>
     <div id="list"></div>
     <button class="reload" id="reload">最新の状態にする</button>
@@ -95,33 +224,52 @@
 
   <div id="msg" class="msg" hidden></div>
 
+  <!-- 記録が終わったら -->
   <section class="done" id="done" hidden>
     <div class="mark">✓</div>
-    <h2>在庫切れを記録しました</h2>
+    <h2 id="doneTitle">記録しました</h2>
     <div class="detail" id="doneDetail"></div>
+    <div class="time" id="doneTime"></div>
     <div class="btns">
       <button class="again" id="again">続けて記録する</button>
-      <button class="close" id="close">閉じる</button>
+      <button class="close" id="close" style="margin-top:0">閉じる</button>
     </div>
   </section>
 </div>
 
-<div class="bar" id="bar">
-  <div class="inner"><button class="primary" id="submit">記録する</button></div>
+<!-- 下のボタン（開け・締め） -->
+<div class="bar" id="barCount" hidden>
+  <div class="inner">
+    <div class="total"><small>合計</small><b id="total">0円</b></div>
+    <button class="primary" id="countSubmit">送信する</button>
+  </div>
+</div>
+<!-- 下のボタン（入金・出金） -->
+<div class="bar" id="barMoney" hidden>
+  <div class="inner">
+    <button class="secondary" id="moneyBack" hidden>戻る</button>
+    <button class="primary" id="moneyNext">確認する</button>
+  </div>
 </div>
 
 <script>
   // ===== 設定（config.js から読む） =====
   const CONFIG = window.APP_CONFIG || {};
-  const LIFF_ID = (CONFIG.LIFF || {}).order || '';
+  const LIFF_ID = (CONFIG.LIFF || {}).regi || '';
   const GAS_URL = CONFIG.GAS_URL || '';
   // ================
 
+  const DENOMS = [10000, 5000, 1000, 500, 100, 50, 10, 5, 1];
+  const SALARY = '給料';
   const $ = (id) => document.getElementById(id);
+  const yen = (n) => Number(n).toLocaleString('ja-JP') + '円';
+  const hm = (min) => { const h = Math.floor(min / 60), m = min % 60; return (h ? h + '時間' : '') + (h ? String(m).padStart(2, '0') : m) + '分'; };
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
-  let data = null;          // { wait: [...], done: [...] }
-  let listMode = 'wait';
+  let conf = { state: 'none', categories: [], staff: [], wage: 1500, unitMin: 30, today: '' };
+  let tab = '';                       // 開け／締め／入金／出金／確認
+  const ms = { category: '', who: null, dateMode: '', date: '' };   // 入出金の入力状態
+  let listMode = 'now', listData = null;
 
   async function api(payload) {
     const res = await fetch(GAS_URL, {
@@ -131,115 +279,314 @@
     });
     return res.json();
   }
-  function showMsg(text, cls) { const m = $('msg'); m.textContent = text; m.className = 'msg ' + (cls || ''); m.hidden = false; }
+  function showMsg(text, cls) { const m = $('msg'); m.textContent = text; m.className = 'msg ' + (cls || ''); m.hidden = false; m.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
   function hideMsg() { $('msg').hidden = true; }
-  const lines = () => [...new Set($('text').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean))];
 
-  // ===== タブ =====
+  // ===== 状態とタブ =====
+  function renderHead() {
+    const b = $('badge');
+    b.className = 'badge st-' + conf.state;
+    b.textContent = conf.state === 'open' ? 'レジ開け中' : conf.state === 'close' ? 'レジ締め後' : 'レジの記録なし';
+    const tabs = conf.state === 'open' ? ['出金', '入金', 'レジ締め', '確認'] : ['レジ開け', '入金', '出金', '確認'];
+    $('tabs').replaceChildren(...tabs.map((t) => {
+      const btn = el('button', t === tab ? 'on' : '', t);
+      btn.addEventListener('click', () => selectTab(t));
+      return btn;
+    }));
+  }
+
   function selectTab(t) {
+    tab = t;
     hideMsg();
-    $('tAdd').classList.toggle('on', t === 'add');
-    $('tList').classList.toggle('on', t === 'list');
-    $('vAdd').hidden = t !== 'add'; $('bar').hidden = t !== 'add';
-    $('vList').hidden = t !== 'list';
-    if (t === 'add') updateButton();
-    if (t === 'list') load();
-  }
-  function updateButton() {
-    const n = lines().length;
-    $('submit').textContent = n ? n + '品を記録する' : '記録する';
-    $('submit').disabled = !n;
-  }
-  function updateBadge() {
-    $('tList').replaceChildren(document.createTextNode('確認'));
-    if (data && data.wait.length) $('tList').append(el('span', 'n', String(data.wait.length)));
+    renderHead();
+    const isCount = t === 'レジ開け' || t === 'レジ締め', isMoney = t === '入金' || t === '出金';
+    $('vCount').hidden = !isCount; $('barCount').hidden = !isCount;
+    $('vMoney').hidden = !isMoney; $('barMoney').hidden = !isMoney;
+    $('vList').hidden = t !== '確認';
+    if (isCount) { $('cf').hidden = true; $('reasonBox').hidden = true; setCountInputs(true); $('countSubmit').textContent = '送信する'; }
+    if (isMoney) { toMoneyForm(); renderMoney(); }
+    if (t === '確認') loadList();
   }
 
-  // ===== 在庫切れを記録 =====
-  async function submit() {
-    if (!lines().length) return;
-    $('submit').disabled = true; $('submit').textContent = '記録中…';
+  // ===== 開け・締め =====
+  function buildTable() {
+    $('table').innerHTML = DENOMS.map((d, i) => `
+      <div class="row">
+        <label for="c${i}">${d.toLocaleString('ja-JP')}円</label>
+        <input id="c${i}" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+               enterkeyhint="${i < DENOMS.length - 1 ? 'next' : 'done'}" placeholder="0">
+        <div class="subt" id="s${i}">0円</div>
+      </div>`).join('');
+    DENOMS.forEach((d, i) => {
+      const inp = $('c' + i);
+      inp.addEventListener('input', () => {
+        inp.value = inp.value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\D/g, '');
+        recalc();
+      });
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); if (i < DENOMS.length - 1) $('c' + (i + 1)).focus(); else inp.blur(); }
+      });
+    });
+  }
+  const counts = () => DENOMS.map((_, i) => Number($('c' + i).value) || 0);
+  function recalc() {
+    let t = 0;
+    counts().forEach((n, i) => { const s = DENOMS[i] * n; t += s; $('s' + i).textContent = yen(s); });
+    $('total').textContent = yen(t);
+  }
+  const setCountInputs = (on) => document.querySelectorAll('#table input').forEach((x) => (x.disabled = !on));
+  const regiKind = () => tab;   // タブ名がそのまま区分（レジ開け／レジ締め）
+
+  async function countSubmit() {
+    const c = counts();
+    if (c.every((n) => n === 0)) { showMsg('枚数を入力してください。', 'ng'); return; }
+    const needReason = !$('reasonBox').hidden;
+    const reason = $('reason').value.trim();
+    if (needReason && !reason) { showMsg('合わない理由を入力してください。', 'ng'); $('reason').focus(); return; }
+    $('countSubmit').disabled = true;
+    $('countSubmit').textContent = tab === 'レジ締め' ? 'Squareの売上を確認中…' : '送信中…';
     try {
-      const r = await api({ action: 'stock_add', text: $('text').value });
-      if (!r.ok) { showMsg(r.message, 'ng'); updateButton(); return; }
-      $('text').value = '';
-      ['tabs', 'vAdd', 'bar'].forEach((id) => ($(id).hidden = true));
-      hideMsg();
-      $('doneDetail').textContent = r.message;
-      $('done').hidden = false;
-      window.scrollTo(0, 0);
-      api({ action: 'stock_status' }).then((s) => { if (s.ok) { data = s; updateBadge(); } }).catch(() => {});
-      // トークにも記録を残す（LIFFに chat_message.write の権限が必要）
-      if (liff.isInClient() && r.chat) { try { await liff.sendMessages([{ type: 'text', text: r.chat }]); } catch (e) { console.warn(e); } }
+      const d = await api({ action: 'regi_submit', kind: regiKind(), counts: c, reason: needReason ? reason : '' });
+      if (d.ok && d.preview) { showCloseConfirm(d); }
+      else if (d.ok) { finished(d.message, regiKind() + 'を記録しました（' + yen(c.reduce((s, n, i) => s + n * DENOMS[i], 0)) + '）', regiKind() + 'を記録しました'); }
+      else {
+        showMsg(d.message, 'ng');
+        if (d.needReason) { $('reasonBox').hidden = false; $('countSubmit').textContent = '理由を付けて記録'; }
+        else if (d.recount) { $('countSubmit').textContent = '数え直して送信'; }
+        else { $('countSubmit').textContent = '送信する'; }
+      }
     } catch (e) {
-      showMsg('通信に失敗しました。もう一度お試しください。', 'ng'); updateButton();
+      showMsg('通信に失敗しました。もう一度お試しください。', 'ng');
+      $('countSubmit').textContent = '送信する';
+    } finally {
+      $('countSubmit').disabled = false;
     }
   }
 
-  // ===== 確認 =====
-  function render() {
-    $('lWait').classList.toggle('on', listMode === 'wait');
-    $('lDone').classList.toggle('on', listMode === 'done');
-    updateBadge();
-    const card = el('div', 'card');
-    if (!data) card.append(el('div', 'empty', '読み込み中…'));
-    else {
-      const rows = listMode === 'wait' ? data.wait : data.done;
-      if (!rows.length) card.append(el('div', 'empty', listMode === 'wait' ? '未入荷の品はありません。' : '過去1週間に入荷した品はありません。'));
-      rows.forEach((it) => {
-        const row = el('div', 'item');
-        row.append(el('div', 'what', it.name));
-        if (listMode === 'wait') {
-          const b = el('button', 'act', '入荷済にする');
-          b.addEventListener('click', () => arrived(it, b));
-          row.append(b);
-          row.append(el('div', 'meta', it.time + '・' + it.who));
-        } else {
-          row.append(el('div', 'meta', '入荷 ' + it.doneTime + '・' + it.doneBy + '（記録 ' + it.time + '・' + it.who + '）'));
-        }
-        card.append(row);
+  function showCloseConfirm(d) {
+    hideMsg();
+    $('barCount').hidden = true;
+    setCountInputs(false);
+    $('cfClose').textContent = yen(d.closeTotal);
+    if (d.expected !== null && d.expected !== undefined) {
+      $('cfExpected').textContent = yen(d.expected);
+      $('cfDiff').textContent = '（' + (d.diff > 0 ? '+' : d.diff < 0 ? '−' : '±') + Math.abs(d.diff).toLocaleString('ja-JP') + '）';
+      $('cfDiff').className = 'diff ' + (d.diff < 0 ? 'minus' : d.diff > 0 ? 'plus' : '');
+    } else { $('cfExpected').textContent = '—'; $('cfDiff').textContent = ''; }
+    $('cfSquare').textContent = (d.square !== null && d.square !== undefined) ? yen(d.square) : '—';
+    $('cfNote').textContent = d.note || (d.squareError ? 'Squareの売上を取得できませんでした。このまま記録して、あとで取り直すことができます。' : '');
+    $('cfMemoBox').hidden = true; $('cfMemoBtn').hidden = false; $('cfYes').textContent = 'はい';
+    $('cf').hidden = false;
+    $('cf').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function confirmClose() {
+    const memoOpen = !$('cfMemoBox').hidden;
+    const memo = memoOpen ? $('cfMemo').value.trim() : '';
+    if (memoOpen && !memo) { $('cfMemo').focus(); return; }
+    ['cfYes', 'cfMemoBtn', 'cfCancel'].forEach((id) => ($(id).disabled = true));
+    $('cfYes').textContent = '記録中…';
+    try {
+      const c = counts();
+      const d = await api({ action: 'regi_submit', kind: 'レジ締め', counts: c, confirm: true, memo: memo });
+      if (d.ok) finished(d.message, 'レジ締めを記録しました（' + yen(c.reduce((s, n, i) => s + n * DENOMS[i], 0)) + '）', 'レジ締めを記録しました');
+      else { showMsg(d.message, 'ng'); $('cfYes').textContent = memoOpen ? 'メモを付けて記録' : 'はい'; }
+    } catch (e) {
+      showMsg('通信に失敗しました。もう一度お試しください。', 'ng');
+      $('cfYes').textContent = memoOpen ? 'メモを付けて記録' : 'はい';
+    } finally {
+      ['cfYes', 'cfMemoBtn', 'cfCancel'].forEach((id) => ($(id).disabled = false));
+    }
+  }
+
+  // ===== 入金・出金 =====
+  function chip(label, on, onClick) { const b = el('button', 'chip' + (on ? ' on' : ''), label); b.addEventListener('click', onClick); return b; }
+  function amountValue() { return Number($('amount').value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[^\d]/g, '')) || 0; }
+
+  function renderMoney() {
+    const isOut = tab === '出金';
+    const isSalary = isOut && ms.category === SALARY;
+    $('fCategory').hidden = !isOut;
+    $('fWho').hidden = !isSalary;
+    $('fDate').hidden = !isSalary;
+    $('categories').replaceChildren(...conf.categories.map((c) => chip(c, ms.category === c, () => { ms.category = c; renderMoney(); })));
+    $('staff').replaceChildren(...conf.staff.map((p, i) => chip(p.label, ms.who === i, () => { ms.who = i; ms.date = ''; ms.dateMode = ''; renderMoney(); }))
+      .concat([chip('その他', ms.who === 'other', () => { ms.who = 'other'; ms.date = ''; ms.dateMode = 'pick'; renderMoney(); })]));
+    $('otherName').hidden = ms.who !== 'other';
+    const person = typeof ms.who === 'number' ? conf.staff[ms.who] : null;
+    if (ms.who !== null && !(person && person.checkin) && !ms.dateMode) ms.dateMode = 'pick';
+    const chips = [];
+    if (person && person.checkin) {
+      const d = person.checkin;
+      chips.push(chip('今日（' + Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10)) + '）', ms.dateMode === 'today', () => { ms.dateMode = 'today'; ms.date = d; renderMoney(); }));
+    }
+    chips.push(chip('日付を選ぶ', ms.dateMode === 'pick', () => { ms.dateMode = 'pick'; ms.date = ''; renderMoney(); setTimeout(() => $('workDate').focus(), 50); }));
+    $('dateChips').replaceChildren(...chips);
+    $('workDate').hidden = ms.dateMode !== 'pick';
+    const a = amountValue();
+    if (isSalary && a > 0) {
+      const unitYen = conf.wage * conf.unitMin / 60;
+      $('calc').innerHTML = '労働時間 <b>' + hm(Math.round(a / conf.wage * 60)) + '</b>（' + yen(a) + ' ÷ 時給' + yen(conf.wage) + '）' +
+        (a % unitYen ? '<span class="warn">※ ' + conf.unitMin + '分単位の金額ではありません</span>' : '');
+      $('calc').hidden = false;
+    } else { $('calc').hidden = true; }
+  }
+
+  function collectMoney() {
+    const isOut = tab === '出金';
+    const isSalary = isOut && ms.category === SALARY;
+    const d = { kind: tab, category: isOut ? ms.category : '', amount: amountValue(), memo: $('memo').value.trim() };
+    if (isOut && !ms.category) return { error: '科目を選んでください。' };
+    if (!d.amount) return { error: '金額を入力してください。' };
+    if (isSalary) {
+      if (ms.who === null) return { error: '誰の給料かを選んでください。' };
+      if (ms.who === 'other') { d.recipientName = $('otherName').value.trim(); d.recipientId = ''; if (!d.recipientName) return { error: '受け取る人の名前を入力してください。' }; }
+      else { d.recipientName = conf.staff[ms.who].name; d.recipientId = conf.staff[ms.who].userId; }
+      d.workDate = ms.dateMode === 'today' ? ms.date : ($('workDate').value || '').replace(/-/g, '/');
+      if (!d.workDate) return { error: '勤務日を選んでください。' };
+      if (d.workDate > conf.today) return { error: '勤務日に未来の日付は選べません。' };
+    }
+    return d;
+  }
+
+  function toMoneyConfirm() {
+    const d = collectMoney();
+    if (d.error) { showMsg(d.error, 'ng'); return; }
+    hideMsg();
+    const rows = [['区分', d.kind]];
+    if (d.category) rows.push(['科目', d.category]);
+    if (d.recipientName) rows.push(['受取人', d.recipientName]);
+    rows.push(['金額', yen(d.amount)]);
+    if (d.workDate) { rows.push(['勤務日', d.workDate]); rows.push(['労働時間', hm(Math.round(d.amount / conf.wage * 60)) + '（時給' + yen(conf.wage) + '）']); }
+    rows.push(['メモ', d.memo || 'なし']);
+    const dl = $('summary'); dl.innerHTML = '';
+    rows.forEach(([k, v]) => dl.append(el('dt', '', k), el('dd', '', v)));
+    if (d.workDate && d.amount % (conf.wage * conf.unitMin / 60)) dl.append(el('div', 'warn', '※ ' + conf.unitMin + '分単位の金額ではありません'));
+    $('moneyForm').hidden = true; $('moneyConfirm').hidden = false; $('tabs').hidden = true;
+    $('moneyBack').hidden = false; $('moneyNext').textContent = '記録する';
+    window.scrollTo(0, 0);
+  }
+  function toMoneyForm() {
+    $('moneyForm').hidden = false; $('moneyConfirm').hidden = true; $('tabs').hidden = false;
+    $('moneyBack').hidden = true; $('moneyNext').textContent = '確認する';
+  }
+  async function moneySubmit() {
+    const d = collectMoney();
+    if (d.error) { toMoneyForm(); showMsg(d.error, 'ng'); return; }
+    $('moneyNext').disabled = true; $('moneyBack').disabled = true; $('moneyNext').textContent = '記録中…';
+    try {
+      const r = await api(Object.assign({ action: 'money_submit' }, d));
+      if (!r.ok) { showMsg(r.message, 'ng'); $('moneyNext').textContent = '記録する'; return; }
+      finished(r.message, r.chat || r.message, d.kind + 'を記録しました');
+    } catch (e) {
+      showMsg('通信に失敗しました。もう一度お試しください。', 'ng'); $('moneyNext').textContent = '記録する';
+    } finally { $('moneyNext').disabled = false; $('moneyBack').disabled = false; }
+  }
+
+  // ===== 確認（今の営業／過去1週間） =====
+  function itemRow(it) {
+    const isRegi = it.type === 'open' || it.type === 'close';
+    const row = el('div', 'item' + (isRegi ? ' regi r-' + it.type : ''));
+    row.append(el('div', 'what', it.label));
+    const amt = el('div', 'amt' + (it.type === 'in' ? ' in' : it.type === 'out' ? ' out' : ''));
+    amt.textContent = it.type === 'in' ? '+' + it.amount.toLocaleString('ja-JP') : it.type === 'out' ? '−' + it.amount.toLocaleString('ja-JP') : yen(it.amount);
+    row.append(amt, el('div', 'meta', it.time + '・' + it.name + (it.note ? '・' + it.note : '')));
+    return row;
+  }
+  function renderList() {
+    $('lNow').classList.toggle('on', listMode === 'now');
+    $('lWeek').classList.toggle('on', listMode === 'week');
+    const box = $('list'); box.innerHTML = '';
+    const emptyCard = (text) => { const c = el('div', 'list'); c.append(el('div', 'empty', text)); box.append(c); };
+    if (!listData) { emptyCard('読み込み中…'); return; }
+    if (listMode === 'now') {
+      const card = el('div', 'list');
+      if (!listData.current.length) card.append(el('div', 'empty', 'レジの記録がまだありません。'));
+      listData.current.forEach((it) => card.append(itemRow(it)));
+      if (listData.current.length === 1) card.append(el('div', 'empty', (listData.current[0].type === 'open' ? '開け' : '締め') + 'のあとの入出金はまだありません。'));
+      box.append(card);
+    } else {
+      if (!listData.week.length) { emptyCard('過去1週間の記録はありません。'); return; }
+      listData.week.forEach((g) => {
+        const wrap = el('div', 'group');
+        wrap.append(el('div', 'glabel', g[0].time.split(' ')[0] + (g[0].type === 'open' ? ' の営業' : ' の記録')));
+        const card = el('div', 'list');
+        g.forEach((it) => card.append(itemRow(it)));
+        wrap.append(card); box.append(wrap);
       });
     }
-    $('list').replaceChildren(card);
   }
-  async function load() {
-    data = null; render();
+  async function loadList() {
+    listData = null; renderList();
     try {
-      const r = await api({ action: 'stock_status' });
-      if (!r.ok) { showMsg(r.message, 'ng'); return; }
-      data = r; render();
-    } catch (e) { showMsg('読み込みに失敗しました。', 'ng'); }
+      const r = await api({ action: 'register_list' });
+      if (!r.ok) { $('list').innerHTML = ''; $('list').append(el('div', 'empty', r.message)); return; }
+      listData = r; renderList();
+    } catch (e) { $('list').innerHTML = ''; $('list').append(el('div', 'empty', '読み込みに失敗しました。')); }
   }
-  async function arrived(it, btn) {
-    if (!confirm('「' + it.name + '」を入荷済にしますか？')) return;
-    btn.disabled = true; btn.textContent = '記録中…';
+
+  // ===== 記録が終わったら =====
+  async function finished(message, chatText, title) {
+    hideMsg();
+    ['vCount', 'vMoney', 'vList', 'barCount', 'barMoney', 'tabs'].forEach((id) => ($(id).hidden = true));
+    $('doneTitle').textContent = title || '記録しました';
+    // レジ開け・締めを記録したら、右上の状態もすぐ切り替える
+    if (/^レジ開け/.test(title)) conf.state = 'open';
+    if (/^レジ締め/.test(title)) conf.state = 'close';
+    renderHead();
+    $('doneDetail').textContent = message;
+    const now = new Date();
+    $('doneTime').textContent = (now.getMonth() + 1) + '/' + now.getDate() + ' ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ' に記録';
+    $('done').hidden = false;
+    window.scrollTo(0, 0);
+    // トークにも記録を残す（レジ用LIFFに chat_message.write の権限が必要）
+    if (liff.isInClient()) {
+      try { await liff.sendMessages([{ type: 'text', text: chatText }]); } catch (e) { console.warn(e); }
+    }
+  }
+
+  // 「続けて記録する」：入力を空にして、最新の状態で最初の画面に戻る
+  async function again() {
+    $('done').hidden = true;
+    DENOMS.forEach((_, i) => { $('c' + i).value = ''; });
+    recalc(); $('reason').value = ''; $('cfMemo').value = '';
+    $('amount').value = ''; $('memo').value = ''; $('otherName').value = ''; $('workDate').value = '';
+    Object.assign(ms, { category: '', who: null, dateMode: '', date: '' });
+    $('tabs').hidden = false;
     try {
-      const r = await api({ action: 'stock_arrived', id: it.id });
-      if (!r.ok) { showMsg(r.message, 'ng'); btn.disabled = false; btn.textContent = '入荷済にする'; return; }
-      data = r; render(); showMsg(r.message, 'ok');
-    } catch (e) { showMsg('通信に失敗しました。もう一度お試しください。', 'ng'); btn.disabled = false; btn.textContent = '入荷済にする'; }
+      const r = await api({ action: 'register_status' });
+      if (r.ok) conf = r;
+    } catch (e) { /* 状態が取れなければ前の状態のまま */ }
+    selectTab(conf.state === 'open' ? '出金' : 'レジ開け');
   }
 
   // ===== ボタン =====
-  $('tAdd').addEventListener('click', () => selectTab('add'));
-  $('tList').addEventListener('click', () => selectTab('list'));
-  $('lWait').addEventListener('click', () => { listMode = 'wait'; hideMsg(); render(); });
-  $('lDone').addEventListener('click', () => { listMode = 'done'; hideMsg(); render(); });
-  $('reload').addEventListener('click', () => { hideMsg(); load(); });
-  $('text').addEventListener('input', updateButton);
-  $('submit').addEventListener('click', submit);
-  $('again').addEventListener('click', () => { $('done').hidden = true; $('tabs').hidden = false; selectTab('add'); $('text').focus(); });
+  $('countSubmit').addEventListener('click', countSubmit);
+  $('cfYes').addEventListener('click', confirmClose);
+  $('cfMemoBtn').addEventListener('click', () => { $('cfMemoBox').hidden = false; $('cfMemoBtn').hidden = true; $('cfYes').textContent = 'メモを付けて記録'; $('cfMemo').focus(); });
+  $('cfCancel').addEventListener('click', () => { $('cf').hidden = true; $('barCount').hidden = false; setCountInputs(true); $('countSubmit').textContent = '送信する'; window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  $('amount').addEventListener('input', () => { const v = amountValue(); $('amount').value = v ? v.toLocaleString('ja-JP') : ''; renderMoney(); });
+  $('moneyNext').addEventListener('click', () => ($('moneyConfirm').hidden ? toMoneyConfirm() : moneySubmit()));
+  $('moneyBack').addEventListener('click', toMoneyForm);
+  $('lNow').addEventListener('click', () => { listMode = 'now'; renderList(); });
+  $('lWeek').addEventListener('click', () => { listMode = 'week'; renderList(); });
+  $('reload').addEventListener('click', loadList);
+  $('again').addEventListener('click', again);
   $('close').addEventListener('click', () => { if (liff.isInClient()) liff.closeWindow(); else window.close(); });
 
   async function main() {
+    buildTable();
     try {
       if (!/^\d+-\w+$/.test(LIFF_ID) || !/^https:\/\//.test(GAS_URL)) throw new Error('config');
       await liff.init({ liffId: LIFF_ID });
       if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
-      selectTab('add');
-      // 確認の件数（未入荷）を先に読んでおく
-      try { const r = await api({ action: 'stock_status' }); if (r.ok) { data = r; updateBadge(); } } catch (e) { /* なくても記録はできる */ }
+      const r = await api({ action: 'register_status' });
+      if (!r.ok) { $('badge').textContent = ''; showMsg(r.message, 'ng'); return; }
+      conf = r;
+      $('workDate').max = r.today.replace(/\//g, '-');
+      selectTab(conf.state === 'open' ? '出金' : 'レジ開け');
     } catch (e) {
+      $('badge').textContent = '';
       showMsg(e && e.message === 'config'
         ? 'config.js が読み込めないか、設定が入っていません。\n管理者に連絡してください。'
         : 'ページの準備に失敗しました。\nLINEのトーク画面から開き直してください。', 'ng');
