@@ -8,8 +8,8 @@
   LINE レジページ（LIFF）
   レジの開け・締めと、入金・出金（給料を含む）、その確認を1つのページで行います。
   開いたときにレジの状態（開け中／締め後）を表示し、状態に合わせてボタンの並びを変えます。
-    開け中 … [入金][出金][締め][確認]
-    締め後 … [開け][入金][出金][確認]
+    開け中 … [出金][入金][レジ締め][確認]
+    締め後 … [レジ開け][入金][出金][確認]
 
   ■ 設定
     LIFF_ID … レジ用の「LIFF ID」（エンドポイントURLが regi.html のもの）
@@ -42,7 +42,7 @@
   /* タブ */
   .seg { display: grid; grid-template-columns: repeat(4, 1fr); background: #eceef0; border-radius: 10px; padding: 3px; margin-bottom: 14px; }
   .seg.two { grid-template-columns: 1fr 1fr; }
-  .seg button { border: 0; background: none; padding: 10px 4px; font-size: 15px; font-weight: 700; border-radius: 8px; color: var(--sub); }
+  .seg button { border: 0; background: none; padding: 10px 2px; font-size: 15px; white-space: nowrap; font-weight: 700; border-radius: 8px; color: var(--sub); }
   .seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 
   /* 金種入力 */
@@ -123,6 +123,14 @@
   .msg { white-space: pre-line; line-height: 1.6; border-radius: 12px; padding: 14px; margin-top: 14px; background: var(--card); }
   .msg.ok { background: var(--ok-bg); color: #0b6b31; }
   .msg.ng { background: var(--red-bg); color: var(--red); }
+  /* 完了画面 */
+  .done { background: var(--card); border-radius: 16px; padding: 26px 18px 18px; text-align: center; }
+  .done .mark { width: 56px; height: 56px; border-radius: 50%; background: var(--green); color: #fff; font-size: 30px; line-height: 56px; margin: 0 auto 10px; font-weight: 700; }
+  .done h2 { font-size: 20px; margin: 0 0 12px; }
+  .done .detail { white-space: pre-line; line-height: 1.7; text-align: left; background: var(--bg); border-radius: 12px; padding: 12px 14px; font-size: 15px; }
+  .done .time { color: var(--sub); font-size: 13px; margin-top: 10px; }
+  .done .btns { display: grid; gap: 10px; margin-top: 16px; }
+  .done .again { border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; background: var(--green); color: #fff; }
   .close { width: 100%; margin-top: 14px; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; background: #e9ecef; color: var(--text); }
 
   /* 下に固定のボタン */
@@ -216,7 +224,18 @@
   </section>
 
   <div id="msg" class="msg" hidden></div>
-  <button class="close" id="close" hidden>閉じる</button>
+
+  <!-- 記録が終わったら -->
+  <section class="done" id="done" hidden>
+    <div class="mark">✓</div>
+    <h2 id="doneTitle">記録しました</h2>
+    <div class="detail" id="doneDetail"></div>
+    <div class="time" id="doneTime"></div>
+    <div class="btns">
+      <button class="again" id="again">続けて記録する</button>
+      <button class="close" id="close" style="margin-top:0">閉じる</button>
+    </div>
+  </section>
 </div>
 
 <!-- 下のボタン（開け・締め） -->
@@ -236,9 +255,10 @@
 
 <script>
   // ===== 設定 =====
-   const LIFF_ID = '2012248509-1uERInyy';
+  const LIFF_ID = '2012248509-1uERInyy';
    const GAS_URL = 'https://script.google.com/macros/s/AKfycbzalJEbvSnagpUa7yxwQhmnCgGLNAtLfDVdY7Um2jdXGsAgX3D6NEHGe8QjeELg1YD7/exec';
   // ================
+
 
   const DENOMS = [10000, 5000, 1000, 500, 100, 50, 10, 5, 1];
   const SALARY = '給料';
@@ -268,7 +288,7 @@
     const b = $('badge');
     b.className = 'badge st-' + conf.state;
     b.textContent = conf.state === 'open' ? 'レジ開け中' : conf.state === 'close' ? 'レジ締め後' : 'レジの記録なし';
-    const tabs = conf.state === 'open' ? ['入金', '出金', '締め', '確認'] : ['開け', '入金', '出金', '確認'];
+    const tabs = conf.state === 'open' ? ['出金', '入金', 'レジ締め', '確認'] : ['レジ開け', '入金', '出金', '確認'];
     $('tabs').replaceChildren(...tabs.map((t) => {
       const btn = el('button', t === tab ? 'on' : '', t);
       btn.addEventListener('click', () => selectTab(t));
@@ -280,7 +300,7 @@
     tab = t;
     hideMsg();
     renderHead();
-    const isCount = t === '開け' || t === '締め', isMoney = t === '入金' || t === '出金';
+    const isCount = t === 'レジ開け' || t === 'レジ締め', isMoney = t === '入金' || t === '出金';
     $('vCount').hidden = !isCount; $('barCount').hidden = !isCount;
     $('vMoney').hidden = !isMoney; $('barMoney').hidden = !isMoney;
     $('vList').hidden = t !== '確認';
@@ -316,7 +336,7 @@
     $('total').textContent = yen(t);
   }
   const setCountInputs = (on) => document.querySelectorAll('#table input').forEach((x) => (x.disabled = !on));
-  const regiKind = () => (tab === '締め' ? 'レジ締め' : 'レジ開け');
+  const regiKind = () => tab;   // タブ名がそのまま区分（レジ開け／レジ締め）
 
   async function countSubmit() {
     const c = counts();
@@ -325,11 +345,11 @@
     const reason = $('reason').value.trim();
     if (needReason && !reason) { showMsg('合わない理由を入力してください。', 'ng'); $('reason').focus(); return; }
     $('countSubmit').disabled = true;
-    $('countSubmit').textContent = tab === '締め' ? 'Squareの売上を確認中…' : '送信中…';
+    $('countSubmit').textContent = tab === 'レジ締め' ? 'Squareの売上を確認中…' : '送信中…';
     try {
       const d = await api({ action: 'regi_submit', kind: regiKind(), counts: c, reason: needReason ? reason : '' });
       if (d.ok && d.preview) { showCloseConfirm(d); }
-      else if (d.ok) { finished(d.message, regiKind() + 'を記録しました（' + yen(c.reduce((s, n, i) => s + n * DENOMS[i], 0)) + '）', false); }
+      else if (d.ok) { finished(d.message, regiKind() + 'を記録しました（' + yen(c.reduce((s, n, i) => s + n * DENOMS[i], 0)) + '）', regiKind() + 'を記録しました'); }
       else {
         showMsg(d.message, 'ng');
         if (d.needReason) { $('reasonBox').hidden = false; $('countSubmit').textContent = '理由を付けて記録'; }
@@ -370,7 +390,7 @@
     try {
       const c = counts();
       const d = await api({ action: 'regi_submit', kind: 'レジ締め', counts: c, confirm: true, memo: memo });
-      if (d.ok) finished(d.message, 'レジ締めを記録しました（' + yen(c.reduce((s, n, i) => s + n * DENOMS[i], 0)) + '）', false);
+      if (d.ok) finished(d.message, 'レジ締めを記録しました（' + yen(c.reduce((s, n, i) => s + n * DENOMS[i], 0)) + '）', 'レジ締めを記録しました');
       else { showMsg(d.message, 'ng'); $('cfYes').textContent = memoOpen ? 'メモを付けて記録' : 'はい'; }
     } catch (e) {
       showMsg('通信に失敗しました。もう一度お試しください。', 'ng');
@@ -458,7 +478,7 @@
     try {
       const r = await api(Object.assign({ action: 'money_submit' }, d));
       if (!r.ok) { showMsg(r.message, 'ng'); $('moneyNext').textContent = '記録する'; return; }
-      finished(r.message, r.chat || r.message, true);
+      finished(r.message, r.chat || r.message, d.kind + 'を記録しました');
     } catch (e) {
       showMsg('通信に失敗しました。もう一度お試しください。', 'ng'); $('moneyNext').textContent = '記録する';
     } finally { $('moneyNext').disabled = false; $('moneyBack').disabled = false; }
@@ -507,14 +527,38 @@
   }
 
   // ===== 記録が終わったら =====
-  async function finished(message, chatText, autoClose) {
-    showMsg(message, 'ok');
+  async function finished(message, chatText, title) {
+    hideMsg();
     ['vCount', 'vMoney', 'vList', 'barCount', 'barMoney', 'tabs'].forEach((id) => ($(id).hidden = true));
-    $('close').hidden = false;
+    $('doneTitle').textContent = title || '記録しました';
+    // レジ開け・締めを記録したら、右上の状態もすぐ切り替える
+    if (/^レジ開け/.test(title)) conf.state = 'open';
+    if (/^レジ締め/.test(title)) conf.state = 'close';
+    renderHead();
+    $('doneDetail').textContent = message;
+    const now = new Date();
+    $('doneTime').textContent = (now.getMonth() + 1) + '/' + now.getDate() + ' ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ' に記録';
+    $('done').hidden = false;
+    window.scrollTo(0, 0);
+    // トークにも記録を残す（レジ用LIFFに chat_message.write の権限が必要）
     if (liff.isInClient()) {
       try { await liff.sendMessages([{ type: 'text', text: chatText }]); } catch (e) { console.warn(e); }
-      if (autoClose) setTimeout(() => liff.closeWindow(), 1500);
     }
+  }
+
+  // 「続けて記録する」：入力を空にして、最新の状態で最初の画面に戻る
+  async function again() {
+    $('done').hidden = true;
+    DENOMS.forEach((_, i) => { $('c' + i).value = ''; });
+    recalc(); $('reason').value = ''; $('cfMemo').value = '';
+    $('amount').value = ''; $('memo').value = ''; $('otherName').value = ''; $('workDate').value = '';
+    Object.assign(ms, { category: '', who: null, dateMode: '', date: '' });
+    $('tabs').hidden = false;
+    try {
+      const r = await api({ action: 'register_status' });
+      if (r.ok) conf = r;
+    } catch (e) { /* 状態が取れなければ前の状態のまま */ }
+    selectTab(conf.state === 'open' ? '出金' : 'レジ開け');
   }
 
   // ===== ボタン =====
@@ -528,6 +572,7 @@
   $('lNow').addEventListener('click', () => { listMode = 'now'; renderList(); });
   $('lWeek').addEventListener('click', () => { listMode = 'week'; renderList(); });
   $('reload').addEventListener('click', loadList);
+  $('again').addEventListener('click', again);
   $('close').addEventListener('click', () => { if (liff.isInClient()) liff.closeWindow(); else window.close(); });
 
   async function main() {
@@ -539,7 +584,7 @@
       if (!r.ok) { $('badge').textContent = ''; showMsg(r.message, 'ng'); return; }
       conf = r;
       $('workDate').max = r.today.replace(/\//g, '-');
-      selectTab(conf.state === 'open' ? '入金' : '開け');
+      selectTab(conf.state === 'open' ? '出金' : 'レジ開け');
     } catch (e) {
       $('badge').textContent = '';
       showMsg('ページの準備に失敗しました。\nLINEのトーク画面から開き直してください。', 'ng');
