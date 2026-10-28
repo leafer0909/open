@@ -23,7 +23,7 @@
   body {
     margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
-    display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+    display: flex; align-items: flex-start; justify-content: center; padding: 24px 16px;
   }
   .card {
     width: 100%; max-width: 400px; background: var(--card); border-radius: 16px;
@@ -61,11 +61,47 @@
     border-radius: 50%; animation: spin 1s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 記録／確認の切り替え */
+  .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--bg); border-radius: 10px; padding: 3px; margin: 4px 0 14px; }
+  .seg button { background: none; color: var(--sub); font-size: 15px; padding: 9px; border-radius: 8px; font-weight: 700; }
+  .seg button.on { background: #fff; color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .seg.small button { font-size: 14px; padding: 7px; }
+
+  /* 確認の一覧 */
+  .list { text-align: left; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 11px 2px; border-bottom: 1px solid #eceff1; }
+  .row:last-child { border-bottom: 0; }
+  .row .who { font-weight: 700; font-size: 15px; min-width: 0; }
+  .row .times { grid-column: 1 / -1; font-size: 13px; color: var(--sub); font-variant-numeric: tabular-nums; }
+  .tag { font-size: 12px; font-weight: 700; border-radius: 999px; padding: 2px 9px; white-space: nowrap; align-self: start; }
+  .tag.work { background: var(--sel); color: #0b6b31; }
+  .tag.done { background: #eef0f2; color: var(--sub); }
+  .tag.paid { background: #eef0f2; color: var(--sub); }
+  .tag.diff { background: #fff4e0; color: #9a5b00; }
+  .tag.unpaid { background: #fdecea; color: var(--red); }
+  .tag.noout { background: #fff4e0; color: #9a5b00; }
+  .empty { padding: 18px 0; text-align: center; color: var(--sub); font-size: 14px; }
 </style>
 </head>
 <body>
   <div class="card">
     <h1>勤怠</h1>
+    <div class="seg" id="mainSeg">
+      <button class="on" id="segRec">記録</button>
+      <button id="segList">確認</button>
+    </div>
+
+    <!-- 確認 -->
+    <div id="listView" hidden>
+      <div class="seg small">
+        <button class="on" id="lToday">今日の全員</button>
+        <button id="lMine">自分の勤務</button>
+      </div>
+      <div class="list" id="list"><div class="empty">読み込み中…</div></div>
+    </div>
+
+    <div id="recView">
     <div class="clock" id="clock">--:--</div>
     <div class="date" id="date"></div>
 
@@ -105,13 +141,16 @@
     </div>
 
     <div class="status" id="status"></div>
+    </div>
     <button class="sub" id="close">閉じる</button>
   </div>
 
 <script>
   // ===== 設定 =====
-  const LIFF_ID = '2012248509-RClZWVEk';
+   const LIFF_ID = '2012248509-RClZWVEk';
   const GAS_URL = 'https://script.google.com/macros/s/AKfycbzalJEbvSnagpUa7yxwQhmnCgGLNAtLfDVdY7Um2jdXGsAgX3D6NEHGe8QjeELg1YD7/exec';
+  // ================
+
   // ================
 
   const $ = (id) => document.getElementById(id);
@@ -257,13 +296,67 @@
   async function done(r) {
     setStatus(r.message || '記録しました。', r.ok ? 'ok' : 'ng');
     if (!r.ok) return;
-    show(null); $('state').hidden = true;
+    show(null); $('state').hidden = true; $('mainSeg').hidden = true;
     if (liff.isInClient()) {
       const t = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
       try { await liff.sendMessages([{ type: 'text', text: r.chat || ('出勤しました（' + t + '）') }]); } catch (e) { console.warn(e); }
       setTimeout(() => liff.closeWindow(), 1500);
     }
   }
+
+  // ----- 確認（今日の全員／自分の勤務） -----
+  let listData = null, listMode = 'today';
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+  function renderList() {
+    $('lToday').classList.toggle('on', listMode === 'today');
+    $('lMine').classList.toggle('on', listMode === 'mine');
+    const box = $('list'); box.innerHTML = '';
+    if (!listData) { box.append(el('div', 'empty', '読み込み中…')); return; }
+    if (listMode === 'today') {
+      if (!listData.today.length) { box.append(el('div', 'empty', 'この24時間に出勤した人はいません。')); return; }
+      listData.today.forEach((r) => {
+        const row = el('div', 'row');
+        row.append(el('div', 'who', r.name + (r.self ? '（自分）' : '')),
+          el('span', 'tag ' + (r.working ? 'work' : 'done'), r.working ? '勤務中' : (r.out ? '退勤済み' : '退勤なし')),
+          el('div', 'times', '出勤 ' + r.in + (r.out ? ' → 退勤 ' + r.out + '・' + r.work : '')));
+        box.append(row);
+      });
+    } else {
+      if (!listData.mine.length) { box.append(el('div', 'empty', '直近1か月の勤務はありません。')); return; }
+      listData.mine.forEach((r) => {
+        const p = r.pay;
+        let cls, label;
+        if (p.status === 'working') { cls = 'work'; label = '勤務中'; }
+        else if (p.status === 'noout') { cls = 'noout'; label = '退勤なし'; }
+        else if (p.status === 'unpaid') { cls = 'unpaid'; label = '未払い ' + p.expected.toLocaleString('ja-JP') + '円'; }
+        else if (p.expected !== null && p.paid !== p.expected) { cls = 'diff'; label = '支払 ' + p.paid.toLocaleString('ja-JP') + '円（本来 ' + p.expected.toLocaleString('ja-JP') + '円）'; }
+        else { cls = 'paid'; label = '支払済 ' + p.paid.toLocaleString('ja-JP') + '円'; }
+        const row = el('div', 'row');
+        row.append(el('div', 'who', r.date + ' の勤務'), el('span', 'tag ' + cls, label),
+          el('div', 'times', r.in + (r.out ? ' → ' + r.out + '・' + r.work : ' 〜')));
+        box.append(row);
+      });
+    }
+  }
+  async function loadList() {
+    listData = null; renderList();
+    try {
+      const r = await api({ action: 'kintai_list' });
+      if (!r.ok) { $('list').innerHTML = ''; $('list').append(el('div', 'empty', r.message)); return; }
+      listData = r; renderList();
+    } catch (e) { $('list').innerHTML = ''; $('list').append(el('div', 'empty', '読み込みに失敗しました。')); }
+  }
+  function mainTab(t) {
+    $('segRec').classList.toggle('on', t === 'rec');
+    $('segList').classList.toggle('on', t === 'list');
+    $('recView').hidden = t !== 'rec';
+    $('listView').hidden = t !== 'list';
+    if (t === 'list') loadList();
+  }
+  $('segRec').addEventListener('click', () => mainTab('rec'));
+  $('segList').addEventListener('click', () => mainTab('list'));
+  $('lToday').addEventListener('click', () => { listMode = 'today'; renderList(); });
+  $('lMine').addEventListener('click', () => { listMode = 'mine'; renderList(); });
 
   // ----- ボタン -----
   $('btnCheckin').addEventListener('click', checkin);
