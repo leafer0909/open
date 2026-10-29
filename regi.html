@@ -294,7 +294,7 @@
   </section>
 </div>
 
-<div class="ver">regi 2026-10-29c</div>
+<div class="ver">regi 2026-10-29d</div>
 <!-- 下のボタン（開け・締め） -->
 <div class="bar" id="barCount" hidden>
   <div class="inner">
@@ -403,7 +403,6 @@
     if (!taskData || taskData.kind !== kind) { $('taskList').replaceChildren(el('div', 'empty', '読み込み中…')); $('taskCount').textContent = ''; }
     else renderTasks();
     try {
-      await taskQueue;                 // 送っている途中のチェックがあれば、送り終えてから読む
       const v0 = tapVersion;
       const r = await api({ action: 'task_status', kind });
       if (!r.ok) { showMsg(r.message, 'ng'); return; }
@@ -425,8 +424,7 @@
     }));
     renderTaskLines();
   }
-  // タップしたらすぐ見た目を変え、記録は裏で順番に送る（返事を待たない）
-  let taskQueue = Promise.resolve();
+  // タップはページの中だけで付け外し（送るのは「次へ」を押したときの1回だけ）
   let tapVersion = 0;
   function paintTask(x, b) {
     b.classList.toggle('done', x.done);
@@ -438,16 +436,6 @@
     tapVersion++;
     x.done = !x.done;
     paintTask(x, b);
-    const kind = taskData.kind, done = x.done;
-    taskQueue = taskQueue.then(async () => {
-      try {
-        const r = await api({ action: 'task_toggle', kind, task: x.task, done });
-        if (!r.ok) throw new Error(r.message);
-      } catch (e) {
-        if (x.done === done) { x.done = !done; paintTask(x, b); }   // その後に押し直していなければ元に戻す
-        showMsg('「' + x.task + '」を記録できませんでした。もう一度タップしてください。', 'ng');
-      }
-    });
   }
   function leftTasks() { return taskData && taskData.kind === taskKind() ? taskData.tasks.filter((x) => !x.done).map((x) => x.task) : []; }
   // 売上・金種の画面の上に「開店作業 4/5 完了」を出す（タップでリストに戻る）
@@ -461,9 +449,20 @@
       b.textContent = taskData.kind + '作業 ' + (taskData.tasks.length - left.length) + '/' + taskData.tasks.length + ' 完了' + (left.length ? '（未完了あり）' : ' ✓');
     });
   }
-  function tasksNext() {
+  async function tasksNext() {
     const left = leftTasks();
     if (left.length && !confirm('未完了の作業が' + left.length + 'つあります：\n' + left.join('、') + '\n\nこのまま進みますか？')) return;
+    if (taskData && taskData.kind === taskKind() && taskData.tasks.length) {
+      const label = $('tasksNext').textContent;
+      $('tasksNext').disabled = true; $('tasksNext').textContent = '保存中…';
+      try {
+        const r = await api({ action: 'task_save', kind: taskData.kind, done: taskData.tasks.filter((x) => x.done).map((x) => x.task) });
+        if (!r.ok) throw new Error(r.message);
+      } catch (e) {
+        showMsg('作業の記録を保存できませんでした。もう一度「次へ」を押してください。', 'ng');
+        return;
+      } finally { $('tasksNext').disabled = false; $('tasksNext').textContent = label; }
+    }
     tasksPassed[tab] = true;
     selectTab(tab);
     window.scrollTo(0, 0);
@@ -499,7 +498,6 @@
   const regiKind = () => tab;   // タブ名がそのまま区分（レジ開け／レジ締め）
 
   async function countSubmit() {
-    await taskQueue;   // チェックの記録が送り終わってから、開け・締めを記録する
     const c = counts();
     if (c.every((n) => n === 0)) { showMsg('枚数を入力してください。', 'ng'); return; }
     const needReason = !$('reasonBox').hidden;
