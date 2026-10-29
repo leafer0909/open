@@ -401,8 +401,11 @@
     if (!taskData || taskData.kind !== kind) { $('taskList').replaceChildren(el('div', 'empty', '読み込み中…')); $('taskCount').textContent = ''; }
     else renderTasks();
     try {
+      await taskQueue;                 // 送っている途中のチェックがあれば、送り終えてから読む
+      const v0 = tapVersion;
       const r = await api({ action: 'task_status', kind });
       if (!r.ok) { showMsg(r.message, 'ng'); return; }
+      if (tapVersion !== v0 && taskData && taskData.kind === kind) return;   // 読んでいる間にタップされたら、画面の状態を優先
       taskData = r;
       if (!r.tasks.length && tab && taskKind() === kind && !tasksPassed[tab]) { tasksPassed[tab] = true; selectTab(tab); return; }   // 作業が1つもなければ飛ばす
       renderTasks();
@@ -422,6 +425,7 @@
   }
   // タップしたらすぐ見た目を変え、記録は裏で順番に送る（返事を待たない）
   let taskQueue = Promise.resolve();
+  let tapVersion = 0;
   function paintTask(x, b) {
     b.classList.toggle('done', x.done);
     b.querySelector('.box').textContent = x.done ? '✓' : '';
@@ -429,6 +433,7 @@
     renderTaskLines();
   }
   function toggleTask(x, b) {
+    tapVersion++;
     x.done = !x.done;
     paintTask(x, b);
     const kind = taskData.kind, done = x.done;
