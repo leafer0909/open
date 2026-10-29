@@ -146,6 +146,17 @@
   .total b { font-size: 26px; font-variant-numeric: tabular-nums; }
   .primary { flex: 2; border: 0; border-radius: 12px; padding: 14px 18px; font-size: 17px; font-weight: 700; background: var(--green); color: #fff; }
   .salesLine { display: flex; align-items: center; justify-content: space-between; background: var(--card); border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; font-size: 15px; }
+  .taskHead { display: flex; justify-content: space-between; align-items: baseline; margin: 0 2px 8px; }
+  .taskHead b { font-size: 17px; }
+  .taskHead span { color: var(--sub); font-size: 14px; font-weight: 600; }
+  .task { border-radius: 0; display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 13px 0; font-size: 16px; color: var(--text); }
+  .task:last-child { border-bottom: 0; }
+  .task .box { width: 26px; height: 26px; border-radius: 7px; border: 2px solid #c4c9ce; display: grid; place-items: center; color: #fff; font-size: 16px; font-weight: 700; }
+  .task.done .box { background: var(--green); border-color: var(--green); }
+  .task.done .name { color: var(--sub); }
+  .task .who { font-size: 12.5px; color: var(--sub); white-space: nowrap; }
+  .taskLine { display: block; width: 100%; text-align: left; border: 0; background: var(--card); border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; font-size: 14.5px; color: var(--text); }
+  .taskLine.warn { background: var(--warn-bg); color: var(--warn); font-weight: 600; }
   .salesTotal { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; color: var(--sub); }
   .salesTotal b { font-size: 22px; color: var(--text); font-variant-numeric: tabular-nums; }
   .salesLine b { font-size: 17px; font-variant-numeric: tabular-nums; margin-left: 4px; }
@@ -161,8 +172,16 @@
   </div>
   <div class="seg" id="tabs"></div>
 
+  <!-- 開け・締めの前：やることリスト -->
+  <section id="vTasks" hidden>
+    <div class="taskHead"><b id="taskTitle">開店作業</b><span id="taskCount"></span></div>
+    <div class="list" id="taskList"></div>
+    <p class="muted" style="margin-top:10px">済んだ作業をタップしてください。もう一度タップすると外せます。</p>
+  </section>
+
   <!-- 締め：売上の入力（Squareと連動するまでの暫定） -->
   <section id="vSales" hidden>
+    <button class="taskLine" data-tasks hidden></button>
     <div class="card">
       <div class="field">
         <div class="label">現金売上</div>
@@ -185,6 +204,7 @@
 
   <!-- 開け・締め：金種入力 -->
   <section id="vCount" hidden>
+    <button class="taskLine" data-tasks hidden></button>
     <div class="salesLine" id="salesLine" hidden>
       <span id="salesShow"></span>
       <button id="salesEdit">変更する</button>
@@ -280,6 +300,12 @@
     <button class="primary" id="countSubmit">送信する</button>
   </div>
 </div>
+<!-- 下のボタン（やることリスト） -->
+<div class="bar" id="barTasks" hidden>
+  <div class="inner">
+    <button class="primary" id="tasksNext">次へ</button>
+  </div>
+</div>
 <!-- 下のボタン（締め：現金売上） -->
 <div class="bar" id="barSales" hidden>
   <div class="inner">
@@ -312,6 +338,9 @@
   let tab = '';                       // 開け／締め／入金／出金／確認
   const ms = { category: '', who: null, dateMode: '', date: '' };   // 入出金の入力状態
   let listMode = 'now', listData = null;
+  const tasksPassed = {};             // { レジ開け: true } … 作業リストを見て「次へ」を押した
+  let taskData = null;                // { kind, tasks: [{ task, done, by, time }] }
+  const taskKind = () => (tab === 'レジ開け' ? '開店' : '閉店');
   let moneyReqId = '';                 // 入出金の受付番号（二重記録を防ぐ）
   let salesVal = null;                // レジ締めの前に入力した売上 { cash, cashless }（Square未設定の間だけ）
   const askSales = () => tab === 'レジ締め' && conf.askSales;
@@ -344,7 +373,13 @@
     tab = t;
     hideMsg();
     renderHead();
-    const isCount = t === 'レジ開け' || t === 'レジ締め', isMoney = t === '入金' || t === '出金';
+    const isRegi = t === 'レジ開け' || t === 'レジ締め';
+    const needTasks = isRegi && !tasksPassed[t];
+    $('vTasks').hidden = !needTasks; $('barTasks').hidden = !needTasks;
+    if (needTasks) loadTasks();
+    renderTaskLines();
+    const isCount = isRegi && !needTasks, isMoney = t === '入金' || t === '出金';
+    if (needTasks) { ['vSales', 'barSales', 'vCount', 'barCount', 'vMoney', 'barMoney', 'vList'].forEach((id) => ($(id).hidden = true)); return; }
     const needSales = isCount && askSales() && salesVal === null;
     $('vSales').hidden = !needSales; $('barSales').hidden = !needSales;
     $('vCount').hidden = !isCount || needSales; $('barCount').hidden = !isCount || needSales;
@@ -356,6 +391,66 @@
     if (isCount) { $('cf').hidden = true; $('reasonBox').hidden = true; setCountInputs(true); $('countSubmit').textContent = '送信する'; }
     if (isMoney) { toMoneyForm(); renderMoney(); }
     if (t === '確認') loadList();
+  }
+
+  // ===== やることリスト =====
+  async function loadTasks() {
+    const kind = taskKind();
+    $('taskTitle').textContent = kind + '作業';
+    $('tasksNext').textContent = tab === 'レジ開け' ? '次へ（金種の入力）' : askSales() ? '次へ（売上の入力）' : '次へ（金種の入力）';
+    if (!taskData || taskData.kind !== kind) { $('taskList').replaceChildren(el('div', 'empty', '読み込み中…')); $('taskCount').textContent = ''; }
+    else renderTasks();
+    try {
+      const r = await api({ action: 'task_status', kind });
+      if (!r.ok) { showMsg(r.message, 'ng'); return; }
+      taskData = r;
+      if (!r.tasks.length && tab && taskKind() === kind && !tasksPassed[tab]) { tasksPassed[tab] = true; selectTab(tab); return; }   // 作業が1つもなければ飛ばす
+      renderTasks();
+    } catch (e) { showMsg('作業リストを読み込めませんでした。「次へ」で先に進めます。', 'ng'); }
+  }
+  function renderTasks() {
+    if (!taskData) return;
+    const done = taskData.tasks.filter((x) => x.done).length;
+    $('taskCount').textContent = done + '/' + taskData.tasks.length + ' 完了';
+    $('taskList').replaceChildren(...taskData.tasks.map((x) => {
+      const b = el('button', 'task' + (x.done ? ' done' : ''));
+      b.append(el('span', 'box', x.done ? '✓' : ''), el('span', 'name', x.task), el('span', 'who', x.done ? x.time + ' ' + x.by : ''));
+      b.addEventListener('click', () => toggleTask(x));
+      return b;
+    }));
+    renderTaskLines();
+  }
+  async function toggleTask(x) {
+    const before = { done: x.done, by: x.by, time: x.time };
+    x.done = !x.done; x.by = x.done ? '自分' : ''; x.time = x.done ? new Date().toTimeString().slice(0, 5) : '';
+    renderTasks();
+    try {
+      const r = await api({ action: 'task_toggle', kind: taskData.kind, task: x.task, done: x.done });
+      if (!r.ok) throw new Error(r.message);
+      taskData = r; renderTasks();
+    } catch (e) {
+      Object.assign(x, before); renderTasks();
+      showMsg('記録できませんでした。もう一度タップしてください。', 'ng');
+    }
+  }
+  function leftTasks() { return taskData && taskData.kind === taskKind() ? taskData.tasks.filter((x) => !x.done).map((x) => x.task) : []; }
+  // 売上・金種の画面の上に「開店作業 4/5 完了」を出す（タップでリストに戻る）
+  function renderTaskLines() {
+    document.querySelectorAll('[data-tasks]').forEach((b) => {
+      const show = taskData && taskData.kind === taskKind() && taskData.tasks.length && tasksPassed[tab];
+      b.hidden = !show;
+      if (!show) return;
+      const left = leftTasks();
+      b.className = 'taskLine' + (left.length ? ' warn' : '');
+      b.textContent = taskData.kind + '作業 ' + (taskData.tasks.length - left.length) + '/' + taskData.tasks.length + ' 完了' + (left.length ? '（未完了あり）' : ' ✓');
+    });
+  }
+  function tasksNext() {
+    const left = leftTasks();
+    if (left.length && !confirm('未完了の作業が' + left.length + 'つあります：\n' + left.join('、') + '\n\nこのまま進みますか？')) return;
+    tasksPassed[tab] = true;
+    selectTab(tab);
+    window.scrollTo(0, 0);
   }
 
   // ===== 開け・締め =====
@@ -626,6 +721,7 @@
     $('amount').value = ''; $('memo').value = ''; $('otherName').value = ''; $('workDate').value = '';
     Object.assign(ms, { category: '', who: null, dateMode: '', date: '' });
     salesVal = null;
+    Object.keys(tasksPassed).forEach((k) => delete tasksPassed[k]); taskData = null;
     $('tabs').hidden = false;
     try {
       const r = await api({ action: 'register_status' });
@@ -655,6 +751,8 @@
     $('salesInput').value = v.cash.toLocaleString('ja-JP'); $('cashlessInput').value = v.cashless.toLocaleString('ja-JP'); salesTotal();
   });
   $('countSubmit').addEventListener('click', countSubmit);
+  $('tasksNext').addEventListener('click', tasksNext);
+  document.querySelectorAll('[data-tasks]').forEach((b) => b.addEventListener('click', () => { tasksPassed[tab] = false; selectTab(tab); window.scrollTo(0, 0); }));
   $('cfYes').addEventListener('click', confirmClose);
   $('cfMemoBtn').addEventListener('click', () => { $('cfMemoBox').hidden = false; $('cfMemoBtn').hidden = true; $('cfYes').textContent = 'メモを付けて記録'; $('cfMemo').focus(); });
   $('cfCancel').addEventListener('click', () => { $('cf').hidden = true; $('barCount').hidden = false; setCountInputs(true); $('countSubmit').textContent = '送信する'; window.scrollTo({ top: 0, behavior: 'smooth' }); });
