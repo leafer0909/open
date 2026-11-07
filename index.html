@@ -6,10 +6,10 @@
 <title>勤怠</title>
 <!--
   LINE 勤怠ページ（LIFF）
-  開くと今の状態（出勤前／勤務中／退勤済み）を表示し、その状態でできる操作だけを出します。
-    出勤前   … 出勤する（スマホのGPSで店舗にいるか確認）
-    勤務中   … 退勤時刻（今／時刻を選ぶ）を選んで退勤する
-    退勤済み … 退勤時刻を直す／新しく出勤する
+    出勤 … シフト表に今日の予定があれば表示して［はい］で出勤。［いいえ］や予定がない日は A/B/C を選ぶ
+           （スマホのGPSで店舗にいるか確認。退勤の記録はなし：シフトの終了＋残業で勤務が終わる）
+    残業 … いちばん新しい出勤に、30分単位で残業を付ける（次に出勤するまで直せる）
+    確認 … 14日前までの全員の勤務（シフト・残業・給料の支払済／未払い）
 
   ■ 設定 … このファイルは書き換えません。同じフォルダの config.js に GAS_URL と LIFF ID を書きます
 -->
@@ -81,67 +81,99 @@
   .tag.unpaid { background: #fdecea; color: var(--red); }
   .tag.noout { background: #fff4e0; color: #9a5b00; }
   .empty { padding: 18px 0; text-align: center; color: var(--sub); font-size: 14px; }
+
+  .seg3 { display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--bg); border-radius: 10px; padding: 3px; margin: 4px 0 14px; }
+  .seg3 button { background: none; color: var(--sub); font-size: 15px; padding: 9px; border-radius: 8px; font-weight: 700; }
+  .seg3 button.on { background: #fff; color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .shift { border-radius: 14px; background: var(--sel); padding: 16px; margin: 6px 0 14px; text-align: left; }
+  .shift .big { font-size: 30px; font-weight: 800; display: flex; align-items: baseline; gap: 10px; }
+  .shift .big span { font-size: 20px; font-weight: 700; }
+  .shift dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 10px 0 0; font-size: 15px; }
+  .shift dt { color: var(--sub); } .shift dd { margin: 0; font-weight: 700; }
+  .q { font-size: 17px; font-weight: 700; margin: 6px 0 12px; }
+  .yn { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .yn .no { background: #fff; color: var(--text); border: 1.5px solid var(--line); }
+  .pick { display: grid; gap: 10px; text-align: left; margin-bottom: 12px; }
+  .pick button { background: #fff; color: var(--text); border: 1.5px solid var(--line); font-size: 16px; padding: 12px 14px; text-align: left;
+    display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 8px; font-weight: 700; }
+  .pick button.on { border-color: var(--green); background: var(--sel); }
+  .pick b.k { font-size: 24px; } .pick small { color: var(--sub); font-weight: 500; font-size: 13px; display: block; }
+  .target { background: var(--bg); border-radius: 12px; padding: 12px; text-align: left; font-size: 14px; color: var(--sub); margin-bottom: 14px; line-height: 1.6; }
+  .target b { color: var(--text); font-size: 16px; }
+  .stepper { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 6px 0 8px; }
+  .stepper button { width: 56px; height: 56px; padding: 0; border-radius: 14px; background: #fff; color: var(--text); border: 1.5px solid var(--line); font-size: 26px; }
+  .stepper .v { font-size: 32px; font-weight: 800; min-width: 160px; }
+  .preview2 { font-size: 15px; color: var(--sub); margin-bottom: 14px; } .preview2 b { color: var(--text); }
+  .note { font-size: 12.5px; color: var(--sub); margin-top: 8px; text-align: left; }
+  .day { font-size: 13px; font-weight: 700; color: var(--sub); margin: 12px 2px 4px; text-align: left; }
+  .r { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; padding: 9px 2px; border-bottom: 1px solid #eceff1; text-align: left; align-items: center; }
+  .r .nm { font-weight: 700; font-size: 15px; min-width: 0; }
+  .r .sh { font-size: 12px; font-weight: 800; border-radius: 6px; padding: 2px 7px; background: #eef0f2; color: var(--sub); }
+  .r .sh.A { background: #e7f8ee; color: #0b6b31; } .r .sh.B { background: #e8f0fe; color: #1a56c4; } .r .sh.C { background: #fff1d6; color: #8a5300; }
+  .r .det { grid-column: 2 / -1; font-size: 12.5px; color: var(--sub); }
+  .tag.unknown { background: #eef0f2; color: var(--sub); }
+  .ver { color: #b5bbc1; font-size: 11px; margin-top: 14px; }
 </style>
 </head>
 <body>
   <div class="card">
     <h1>勤怠</h1>
-    <div class="seg" id="mainSeg">
-      <button class="on" id="segRec">記録</button>
-      <button id="segList">確認</button>
+    <div class="seg3" id="tabs">
+      <button class="on" data-tab="in">出勤</button>
+      <button data-tab="ot">残業</button>
+      <button data-tab="list">確認</button>
+    </div>
+
+    <!-- 出勤 -->
+    <div id="vIn">
+      <div class="clock" id="clock">--:--</div>
+      <div class="date" id="date"></div>
+      <div class="spinner" id="spinner"></div>
+
+      <div class="state working" id="already" hidden></div>
+
+      <!-- シフト表に予定がある -->
+      <div id="vPlan" hidden>
+        <div class="shift" id="planBox"></div>
+        <p class="q">この内容で出勤しますか？</p>
+        <div class="yn"><button id="yes">はい</button><button class="no" id="no">いいえ</button></div>
+      </div>
+
+      <!-- シフトを選ぶ -->
+      <div id="vPick" hidden>
+        <p class="q" id="pickQ">今日のシフトを選んでください</p>
+        <div class="pick" id="pick"></div>
+        <button id="pickGo" disabled>シフトを選んでください</button>
+      </div>
+
+      <!-- 同じ日にもう出勤しているとき -->
+      <div class="choices" id="choices" hidden>
+        <button id="cKeep"></button>
+        <button id="cReplace"></button>
+      </div>
+    </div>
+
+    <!-- 残業 -->
+    <div id="vOt" hidden>
+      <div id="otNone" class="empty" hidden>残業を付ける出勤の記録がありません。</div>
+      <div id="otBody" hidden>
+        <div class="target" id="otTarget"></div>
+        <div class="label" id="otLabel">残業時間（30分単位）</div>
+        <div class="stepper"><button id="otMinus">−</button><div class="v" id="otVal">なし</div><button id="otPlus">＋</button></div>
+        <div class="preview2" id="otPreview"></div>
+        <button id="otSave">残業を記録する</button>
+        <p class="note">0にすると残業なしに戻せます。次に出勤するまで、何度でも直せます。</p>
+      </div>
     </div>
 
     <!-- 確認 -->
-    <div id="listView" hidden>
-      <div class="seg small">
-        <button class="on" id="lToday">今日の全員</button>
-        <button id="lMine">自分の勤務</button>
-      </div>
+    <div id="vList" hidden>
       <div class="list" id="list"><div class="empty">読み込み中…</div></div>
     </div>
 
-    <div id="recView">
-    <div class="clock" id="clock">--:--</div>
-    <div class="date" id="date"></div>
-
-    <div class="state" id="state" hidden></div>
-    <div class="spinner" id="spinner"></div>
-
-    <!-- 出勤前 -->
-    <div id="vNone" hidden>
-      <button id="btnCheckin">出勤する</button>
-    </div>
-
-    <!-- 勤務中・退勤時刻を直す -->
-    <div id="vOut" hidden>
-      <div class="label" id="outLabel">退勤時刻</div>
-      <div class="chips">
-        <button class="chip on" id="tNow">今</button>
-        <button class="chip" id="tPick">時刻を選ぶ</button>
-      </div>
-      <input type="datetime-local" id="outTime" hidden>
-      <div class="preview" id="preview"></div>
-      <button id="btnOut">退勤する</button>
-      <button class="sub" id="btnOutCancel" hidden>やめる</button>
-      <button class="link" id="btnRedo">出勤をやり直す</button>
-    </div>
-
-    <!-- 退勤済み -->
-    <div id="vDone" hidden>
-      <button id="btnFix" class="sub" style="margin-top:0">退勤時刻を直す</button>
-      <button id="btnNewIn" style="margin-top:10px">新しく出勤する</button>
-    </div>
-
-    <!-- すでに出勤中のときの選択 -->
-    <div class="choices" id="choices" hidden>
-      <button data-mode="keep" id="cKeep"></button>
-      <button data-mode="replace" id="cReplace"></button>
-      <button data-mode="new" id="cNew">前回の退勤を押し忘れた<small>新しく出勤として記録します</small></button>
-    </div>
-
     <div class="status" id="status"></div>
-    </div>
     <button class="sub" id="close">閉じる</button>
+    <div class="ver">kintai 2026-11-08a</div>
   </div>
 
 <script>
@@ -153,23 +185,20 @@
 
   const $ = (id) => document.getElementById(id);
   const pad = (n) => String(n).padStart(2, '0');
-  const md = (d) => (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-  const hm = (min) => { const h = Math.floor(min / 60), m = min % 60; return (h ? h + '時間' : '') + (h ? pad(m) : m) + '分'; };
-  const local = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-  const setStatus = (text, cls) => { $('status').textContent = text; $('status').className = 'status ' + (cls || ''); };
-  const views = ['vNone', 'vOut', 'vDone', 'choices'];
-  const show = (id) => views.forEach((v) => ($(v).hidden = v !== id));
+  const yen = (n) => Number(n).toLocaleString('ja-JP') + '円';
+  const otText = (m) => { const h = Math.floor(m / 60), r = m % 60; return m ? (h ? h + '時間' : '') + (r ? r + '分' : '') : 'なし'; };
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const setStatus = (text, cls) => { $('status').textContent = text || ''; $('status').className = 'status ' + (cls || ''); };
 
-  let st = null;          // サーバーから受け取った今の状態
-  let fixMode = false;    // 退勤時刻を直している途中か
-  let lastPos = null;
+  let st = null;           // kintai_status の結果
+  let pickCode = '';       // 選んだシフト
+  let otMin = 0;           // 入力中の残業（分）
+  let tab = 'in';
 
-  // 時計
   function tick() {
     const d = new Date();
     $('clock').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes());
     $('date').textContent = d.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
-    if (st && !$('vOut').hidden) updatePreview();
   }
 
   async function api(payload) {
@@ -180,71 +209,61 @@
     });
     return res.json();
   }
+  const shiftOf = (c) => st.shifts.find((s) => s.code === c);
 
-  // ----- 今の状態を表示 -----
-  function renderState() {
-    const box = $('state');
-    box.hidden = false;
-    box.className = 'state';
-    if (st.state === 'working') {
-      const ci = new Date(st.checkin);
-      box.classList.add('working');
-      box.innerHTML = '<b>' + md(ci) + ' から勤務中</b><small>経過 ' + hm(Math.max(0, Math.round((Date.now() - ci) / 60000))) + '</small>';
-      openOut(false);
-    } else if (st.state === 'done') {
-      const ci = new Date(st.checkin), co = new Date(st.checkout);
-      box.innerHTML = '<b>' + md(co) + ' に退勤済み</b><small>出勤 ' + md(ci) + '・勤務 ' + hm(Math.round((co - ci) / 60000)) + '</small>';
-      show('vDone');
+  // ===== タブ =====
+  function selectTab(t) {
+    tab = t;
+    document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
+    $('vIn').hidden = t !== 'in'; $('vOt').hidden = t !== 'ot'; $('vList').hidden = t !== 'list';
+    setStatus('');
+    if (t === 'ot') renderOt();
+    if (t === 'list') loadList();
+  }
+
+  // ===== 出勤 =====
+  function renderIn() {
+    $('spinner').hidden = true;
+    ['vPlan', 'vPick', 'choices'].forEach((id) => ($(id).hidden = true));
+    if (st.today) {
+      const s = st.today.shift ? shiftOf(st.today.shift) : null;
+      $('already').hidden = false;
+      $('already').innerHTML = '<b>今日は ' + st.today.time + ' に出勤済みです</b><small>' + (s ? s.code + ' ' + s.time + '・' + yen(s.pay) : 'シフトなし') + '</small>';
+      openPick('出勤をやり直すときは、シフトを選んでください');
+      return;
+    }
+    $('already').hidden = true;
+    const p = st.plan ? shiftOf(st.plan) : null;
+    if (p) {
+      $('planBox').innerHTML = '';
+      const big = el('div', 'big', p.code); big.append(el('span', '', p.time));
+      const dl = el('dl');
+      dl.append(el('dt', '', '予定の終了'), el('dd', '', p.end), el('dt', '', '給料'), el('dd', '', yen(p.pay)));
+      $('planBox').append(big, dl);
+      $('vPlan').hidden = false;
     } else {
-      box.innerHTML = '<b>出勤前です</b>' + (st.stale ? '<small>前回（' + st.stale + '）の退勤が記録されていません。管理者に伝えてください。</small>' : '');
-      show('vNone');
+      openPick('今日のシフトを選んでください');
     }
   }
-
-  // ----- 退勤時刻の選択 -----
-  function openOut(fix) {
-    fixMode = fix;
-    show('vOut');
-    $('outLabel').textContent = fix ? '正しい退勤時刻' : '退勤時刻';
-    $('btnOut').textContent = fix ? '退勤時刻を直す' : '退勤する';
-    $('btnOutCancel').hidden = !fix;
-    $('btnRedo').hidden = fix;
-    const ci = new Date(st.checkin);
-    $('outTime').min = local(new Date(ci.getTime() + 60000));
-    $('outTime').max = local(new Date());
-    $('outTime').value = local(fix ? new Date(st.checkout) : new Date());
-    pickMode(fix ? 'pick' : 'now');
+  function openPick(q) {
+    $('vPlan').hidden = true; $('choices').hidden = true;
+    $('pickQ').textContent = q;
+    pickCode = '';
+    renderPick();
+    $('vPick').hidden = false;
   }
-  function pickMode(m) {
-    $('tNow').classList.toggle('on', m === 'now');
-    $('tPick').classList.toggle('on', m === 'pick');
-    $('outTime').hidden = m !== 'pick';
-    updatePreview();
-  }
-  function outValue() {
-    if ($('tNow').classList.contains('on')) return new Date();
-    const v = $('outTime').value;
-    return v ? new Date(v) : null;
-  }
-  function updatePreview() {
-    const out = outValue(), ci = new Date(st.checkin);
-    if (!out || out <= ci) { $('preview').textContent = '出勤（' + md(ci) + '）より後の時刻を選んでください。'; return; }
-    $('preview').innerHTML = '出勤 ' + md(ci) + ' → 退勤 ' + md(out) + '<br>勤務時間 <b>' + hm(Math.round((out - ci) / 60000)) + '</b>';
+  function renderPick() {
+    $('pick').replaceChildren(...st.shifts.map((s) => {
+      const b = el('button', pickCode === s.code ? 'on' : '');
+      const mid = el('span', '', s.time); mid.append(el('small', '', '予定の終了 ' + s.end));
+      b.append(el('b', 'k', s.code), mid, el('span', '', yen(s.pay)));
+      b.addEventListener('click', () => { pickCode = s.code; renderPick(); });
+      return b;
+    }));
+    $('pickGo').disabled = !pickCode;
+    $('pickGo').textContent = pickCode ? pickCode + ' で出勤する' : 'シフトを選んでください';
   }
 
-  async function doCheckout() {
-    const nowMode = $('tNow').classList.contains('on');
-    const out = outValue();
-    if (!out) { setStatus('退勤時刻を選んでください。', 'ng'); return; }
-    $('btnOut').disabled = true; setStatus('記録しています…');
-    try {
-      const r = await api({ action: 'kintai_checkout', out: nowMode ? 'now' : out.getTime(), fix: fixMode });
-      done(r);
-    } catch (e) { setStatus('通信に失敗しました。もう一度お試しください。', 'ng'); }
-    finally { $('btnOut').disabled = false; }
-  }
-
-  // ----- 出勤（GPS） -----
   function getPosition() {
     return new Promise((resolve, reject) => {
       if (!navigator.geolocation) return reject(new Error('この端末では位置情報が使えません。'));
@@ -259,132 +278,120 @@
     });
   }
 
-  async function checkin() {
-    document.querySelectorAll('button').forEach((b) => (b.disabled = true));
+  let lastPos = null, lastCode = '';
+  async function checkin(code, mode) {
+    const btns = document.querySelectorAll('button');
+    btns.forEach((b) => (b.disabled = true));
     try {
-      setStatus('現在地を確認しています…');
-      lastPos = await getPosition();
-      await sendCheckin('');
+      if (!mode) { setStatus('現在地を確認しています…'); lastPos = await getPosition(); lastCode = code; }
+      setStatus('記録しています…');
+      const r = await api({ action: 'liff_checkin', shift: lastCode, mode: mode || '',
+        lat: lastPos.coords.latitude, lng: lastPos.coords.longitude, accuracy: lastPos.coords.accuracy });
+      if (r.duplicate) {
+        setStatus(r.message);
+        $('vPlan').hidden = true; $('vPick').hidden = true; $('already').hidden = true;
+        $('cKeep').innerHTML = 'そのままにする<small>' + r.prev + ' の出勤のまま</small>';
+        $('cReplace').innerHTML = lastCode + ' で出勤し直す<small>今の時刻で記録し直します（残業は0に戻ります）</small>';
+        $('choices').hidden = false;
+        return;
+      }
+      done(r);
     } catch (e) {
       setStatus(e.message || '通信に失敗しました。もう一度お試しください。', 'ng');
     } finally {
-      document.querySelectorAll('button').forEach((b) => (b.disabled = false));
+      btns.forEach((b) => (b.disabled = false));
+      if (!$('vPick').hidden) renderPick();
     }
   }
 
-  // mode: '' 通常 ／ keep そのまま ／ replace 出勤し直す ／ new 前回の退勤を押し忘れた
-  async function sendCheckin(mode) {
-    setStatus('記録しています…');
-    const r = await api({
-      action: 'liff_checkin', mode: mode,
-      lat: lastPos.coords.latitude, lng: lastPos.coords.longitude, accuracy: lastPos.coords.accuracy
-    });
-    if (r.duplicate) {
-      setStatus(r.message, 'ng');
-      const t = r.prev.split(' ')[1];
-      $('cKeep').innerHTML = t + ' の出勤のままにする<small>二度押ししたときはこちら（記録しません）</small>';
-      $('cReplace').innerHTML = '今（' + r.now + '）に出勤し直す<small>' + t + ' の出勤を今の時刻に書き換えます</small>';
-      show('choices');
-      return;
-    }
-    done(r);
-  }
-
-  // ----- 記録が終わったら：トークに送ってページを閉じる -----
+  // 記録できたら：トークに残してページを閉じる
   async function done(r) {
     setStatus(r.message || '記録しました。', r.ok ? 'ok' : 'ng');
     if (!r.ok) return;
-    show(null); $('state').hidden = true; $('mainSeg').hidden = true;
+    ['vPlan', 'vPick', 'choices', 'already', 'otBody'].forEach((id) => ($(id).hidden = true));
+    $('tabs').hidden = true;
     if (liff.isInClient()) {
-      const t = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-      try { await liff.sendMessages([{ type: 'text', text: r.chat || ('出勤しました（' + t + '）') }]); } catch (e) { console.warn(e); }
+      try { if (r.chat) await liff.sendMessages([{ type: 'text', text: r.chat }]); } catch (e) { console.warn(e); }
       setTimeout(() => liff.closeWindow(), 1500);
     }
   }
 
-  // ----- 確認（今日の全員／自分の勤務） -----
-  let listData = null, listMode = 'today';
-  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
-  function renderList() {
-    $('lToday').classList.toggle('on', listMode === 'today');
-    $('lMine').classList.toggle('on', listMode === 'mine');
-    const box = $('list'); box.innerHTML = '';
-    if (!listData) { box.append(el('div', 'empty', '読み込み中…')); return; }
-    if (listMode === 'today') {
-      if (!listData.today.length) { box.append(el('div', 'empty', 'この24時間に出勤した人はいません。')); return; }
-      listData.today.forEach((r) => {
-        const row = el('div', 'row');
-        row.append(el('div', 'who', r.name + (r.self ? '（自分）' : '')),
-          el('span', 'tag ' + (r.working ? 'work' : 'done'), r.working ? '勤務中' : (r.out ? '退勤済み' : '退勤なし')),
-          el('div', 'times', '出勤 ' + r.in + (r.out ? ' → 退勤 ' + r.out + '・' + r.work : '')));
-        box.append(row);
-      });
-    } else {
-      if (!listData.mine.length) { box.append(el('div', 'empty', '直近1か月の勤務はありません。')); return; }
-      listData.mine.forEach((r) => {
-        const p = r.pay;
-        let cls, label;
-        if (p.status === 'working') { cls = 'work'; label = '勤務中'; }
-        else if (p.status === 'noout') { cls = 'noout'; label = '退勤なし'; }
-        else if (p.status === 'unpaid') { cls = 'unpaid'; label = '未払い ' + p.expected.toLocaleString('ja-JP') + '円'; }
-        else if (p.expected !== null && p.paid !== p.expected) { cls = 'diff'; label = '支払 ' + p.paid.toLocaleString('ja-JP') + '円（本来 ' + p.expected.toLocaleString('ja-JP') + '円）'; }
-        else { cls = 'paid'; label = '支払済 ' + p.paid.toLocaleString('ja-JP') + '円'; }
-        const row = el('div', 'row');
-        row.append(el('div', 'who', r.date + ' の勤務'), el('span', 'tag ' + cls, label),
-          el('div', 'times', r.in + (r.out ? ' → ' + r.out + '・' + r.work : ' 〜')));
-        box.append(row);
-      });
-    }
+  // ===== 残業 =====
+  function renderOt() {
+    const t = st && st.target;
+    $('otNone').hidden = !!t; $('otBody').hidden = !t;
+    if (!t) return;
+    $('otTarget').innerHTML = '対象の勤務<br><b>' + t.label + '</b><br>次に出勤するまで入力・修正できます';
+    $('otLabel').textContent = '残業時間（' + st.otUnit + '分単位）';
+    otMin = t.ot || 0;
+    paintOt();
   }
+  function paintOt() {
+    const t = st.target;
+    $('otVal').textContent = otText(otMin);
+    const end = (t.endBase + otMin) % (24 * 60);
+    $('otPreview').innerHTML = '終了 <b>' + Math.floor(end / 60) + ':' + pad(end % 60) + '</b>　残業代 <b>' + yen(Math.round(otMin / 60 * st.otHourly)) +
+      '</b>　給料 <b>' + yen(t.pay + Math.round(otMin / 60 * st.otHourly)) + '</b>';
+    $('otMinus').disabled = otMin <= 0;
+    $('otPlus').disabled = otMin >= st.otMax;
+    $('otSave').textContent = otMin === (t.ot || 0) ? (otMin ? 'この残業で記録する' : '残業なしで記録する') : '残業を記録する';
+  }
+  async function saveOt() {
+    $('otSave').disabled = true;
+    setStatus('記録しています…');
+    try {
+      const r = await api({ action: 'kintai_overtime', minutes: otMin });
+      if (r.ok && r.target) st.target = r.target;
+      done(r);
+    } catch (e) { setStatus('通信に失敗しました。もう一度お試しください。', 'ng'); }
+    finally { $('otSave').disabled = false; }
+  }
+
+  // ===== 確認 =====
   async function loadList() {
-    listData = null; renderList();
+    $('list').replaceChildren(el('div', 'empty', '読み込み中…'));
     try {
       const r = await api({ action: 'kintai_list' });
-      if (!r.ok) { $('list').innerHTML = ''; $('list').append(el('div', 'empty', r.message)); return; }
-      listData = r; renderList();
-    } catch (e) { $('list').innerHTML = ''; $('list').append(el('div', 'empty', '読み込みに失敗しました。')); }
+      if (!r.ok) { $('list').replaceChildren(el('div', 'empty', r.message)); return; }
+      if (!r.list.length) { $('list').replaceChildren(el('div', 'empty', r.days + '日以内の勤務はありません。')); return; }
+      const box = $('list'); box.replaceChildren();
+      let day = '';
+      r.list.forEach((w) => {
+        if (w.day !== day) { day = w.day; box.append(el('div', 'day', day)); }
+        const row = el('div', 'r');
+        const p = w.pay;
+        const tag = p.status === 'paid' ? el('span', 'tag paid', '支払済 ' + yen(p.amount))
+          : p.status === 'unpaid' ? el('span', 'tag unpaid', '未払い ' + yen(p.amount)) : el('span', 'tag unknown', 'シフト未入力');
+        row.append(el('span', 'sh ' + (w.shift || ''), w.shift || '—'), el('span', 'nm', w.name + (w.self ? '（自分）' : '')), tag,
+          el('span', 'det', w.time + (w.ot ? '・残業' + w.ot : '')));
+        box.append(row);
+      });
+      box.append(el('div', 'empty', r.days + '日前まで'));
+    } catch (e) { $('list').replaceChildren(el('div', 'empty', '読み込みに失敗しました。')); }
   }
-  function mainTab(t) {
-    $('segRec').classList.toggle('on', t === 'rec');
-    $('segList').classList.toggle('on', t === 'list');
-    $('recView').hidden = t !== 'rec';
-    $('listView').hidden = t !== 'list';
-    if (t === 'list') loadList();
-  }
-  $('segRec').addEventListener('click', () => mainTab('rec'));
-  $('segList').addEventListener('click', () => mainTab('list'));
-  $('lToday').addEventListener('click', () => { listMode = 'today'; renderList(); });
-  $('lMine').addEventListener('click', () => { listMode = 'mine'; renderList(); });
 
-  // ----- ボタン -----
-  $('btnCheckin').addEventListener('click', checkin);
-  $('btnNewIn').addEventListener('click', checkin);
-  $('btnRedo').addEventListener('click', checkin);          // 勤務中に出勤 → 「出勤し直す」などの選択が出る
-  $('tNow').addEventListener('click', () => pickMode('now'));
-  $('tPick').addEventListener('click', () => { pickMode('pick'); $('outTime').focus(); });
-  $('outTime').addEventListener('input', updatePreview);
-  $('btnOut').addEventListener('click', doCheckout);
-  $('btnFix').addEventListener('click', () => openOut(true));
-  $('btnOutCancel').addEventListener('click', () => { setStatus(''); renderState(); });
-  document.querySelectorAll('#choices button').forEach((b) => b.addEventListener('click', async () => {
-    document.querySelectorAll('#choices button').forEach((x) => (x.disabled = true));
-    try { await sendCheckin(b.dataset.mode); }
-    catch (e) { setStatus('通信に失敗しました。もう一度お試しください。', 'ng'); }
-    finally { document.querySelectorAll('#choices button').forEach((x) => (x.disabled = false)); }
-  }));
-  $('close').addEventListener('click', () => { if (window.liff && liff.isInClient && liff.isInClient()) liff.closeWindow(); else window.close(); });
+  // ===== ボタン =====
+  document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => selectTab(b.dataset.tab)));
+  $('yes').addEventListener('click', () => checkin(st.plan, ''));
+  $('no').addEventListener('click', () => openPick('今日のシフトを選んでください'));
+  $('pickGo').addEventListener('click', () => { if (pickCode) checkin(pickCode, ''); });
+  $('cKeep').addEventListener('click', () => checkin(lastCode, 'keep'));
+  $('cReplace').addEventListener('click', () => checkin(lastCode, 'replace'));
+  $('otMinus').addEventListener('click', () => { otMin = Math.max(0, otMin - st.otUnit); paintOt(); });
+  $('otPlus').addEventListener('click', () => { otMin = Math.min(st.otMax, otMin + st.otUnit); paintOt(); });
+  $('otSave').addEventListener('click', saveOt);
+  $('close').addEventListener('click', () => { if (liff.isInClient()) liff.closeWindow(); else window.close(); });
 
   async function main() {
-    tick(); setInterval(tick, 1000);
+    tick(); setInterval(tick, 10000);
     try {
       if (!/^\d+-\w+$/.test(LIFF_ID) || !/^https:\/\//.test(GAS_URL)) throw new Error('config');
       await liff.init({ liffId: LIFF_ID });
       if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
       const r = await api({ action: 'kintai_status' });
-      $('spinner').hidden = true;
-      if (!r.ok) { setStatus(r.message, 'ng'); return; }
+      if (!r.ok) { $('spinner').hidden = true; setStatus(r.message, 'ng'); return; }
       st = r;
-      renderState();
+      renderIn();
     } catch (e) {
       $('spinner').hidden = true;
       setStatus(e && e.message === 'config'
