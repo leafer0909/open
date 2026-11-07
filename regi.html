@@ -72,6 +72,14 @@
   .amount { display: flex; align-items: center; gap: 8px; }
   .amount input { font-size: 22px; text-align: right; font-variant-numeric: tabular-nums; }
   .amount span { font-size: 17px; font-weight: 700; }
+  .up { display: grid; gap: 8px; }
+  .up button { width: 100%; background: #fff; color: var(--text); border: 1.5px solid var(--line); border-radius: 12px; text-align: left;
+    font-size: 15px; padding: 10px 12px; font-weight: 600; display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; }
+  .up button.on { border-color: var(--green); background: var(--sel); }
+  .up .dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #c4c9ce; }
+  .up button.on .dot { border: 6px solid var(--green); }
+  .up small { display: block; color: var(--sub); font-size: 12.5px; font-weight: 400; }
+  .up .none { color: var(--sub); font-size: 14px; padding: 6px 2px; }
   .calc { margin-top: 8px; font-size: 14px; color: var(--sub); }
   .calc b { color: var(--text); }
   .calc .warn { color: var(--warn); display: block; margin-top: 2px; }
@@ -254,10 +262,13 @@
         <div class="chips" id="staff"></div>
         <input type="text" id="otherName" class="other" placeholder="受け取る人の名前" hidden>
       </div>
+      <div class="field" id="fUnpaid" hidden>
+        <div class="label">未払いの勤務（1つ選ぶ）</div>
+        <div class="up" id="unpaid"></div>
+      </div>
       <div class="field" id="fDate" hidden>
         <div class="label">勤務日</div>
-        <div class="chips" id="dateChips"></div>
-        <input type="date" id="workDate" class="other" hidden>
+        <input type="date" id="workDate" class="other">
       </div>
       <div class="field">
         <div class="label">金額</div>
@@ -310,7 +321,7 @@
   </section>
 </div>
 
-<div class="ver">regi 2026-10-29e</div>
+<div class="ver">regi 2026-11-08a</div>
 <!-- 下のボタン（開け・締め） -->
 <div class="bar" id="barCount" hidden>
   <div class="inner">
@@ -355,7 +366,7 @@
 
   let conf = { state: 'none', categories: [], staff: [], wage: 1500, unitMin: 30, today: '' };
   let tab = '';                       // 開け／締め／入金／出金／確認
-  const ms = { category: '', who: null, dateMode: '', date: '' };   // 入出金の入力状態
+  const ms = { category: '', who: null, work: null };   // 入出金の入力状態（work: 選んだ未払いの勤務）
   let listMode = 'now', listData = null;
   const tasksPassed = {};             // { レジ開け: true } … 作業リストを見て「次へ」を押した
   let taskData = null;                // { kind, tasks: [{ task, done, by, time }] }
@@ -603,29 +614,27 @@
     const isSalary = isOut && ms.category === SALARY;
     $('fCategory').hidden = !isOut;
     $('fWho').hidden = !isSalary;
-    $('fDate').hidden = !isSalary;
+    const person = typeof ms.who === 'number' ? conf.staff[ms.who] : null;
+    $('fUnpaid').hidden = !(isSalary && person);
+    $('fDate').hidden = !(isSalary && ms.who === 'other');
     $('fDjVisitors').hidden = !(isOut && ms.category === DJ);
     $('categories').replaceChildren(...conf.categories.map((c) => chip(c, ms.category === c, () => { ms.category = c; renderMoney(); })));
-    $('staff').replaceChildren(...conf.staff.map((p, i) => chip(p.label, ms.who === i, () => { ms.who = i; ms.date = ''; ms.dateMode = ''; renderMoney(); }))
-      .concat([chip('その他', ms.who === 'other', () => { ms.who = 'other'; ms.date = ''; ms.dateMode = 'pick'; renderMoney(); })]));
+    $('staff').replaceChildren(...conf.staff.map((p, i) => chip(p.label, ms.who === i, () => { ms.who = i; ms.work = null; $('amount').value = ''; renderMoney(); }))
+      .concat([chip('その他', ms.who === 'other', () => { ms.who = 'other'; ms.work = null; renderMoney(); })]));
     $('otherName').hidden = ms.who !== 'other';
-    const person = typeof ms.who === 'number' ? conf.staff[ms.who] : null;
-    if (ms.who !== null && !(person && person.checkin) && !ms.dateMode) ms.dateMode = 'pick';
-    const chips = [];
-    if (person && person.checkin) {
-      const d = person.checkin;
-      chips.push(chip('今日（' + Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10)) + '）', ms.dateMode === 'today', () => { ms.dateMode = 'today'; ms.date = d; renderMoney(); }));
+    // 未払いの勤務：選ぶと金額が入る（金額はあとで変えられる）
+    if (person) {
+      const list = person.unpaid || [];
+      if (!list.length) $('unpaid').replaceChildren(el('div', 'none', '未払いの勤務はありません。'));
+      else $('unpaid').replaceChildren(...list.map((u, i) => {
+        const b = el('button', ms.work === i ? 'on' : '');
+        const mid = el('span', '', u.label); mid.append(el('small', '', u.detail));
+        b.append(el('span', 'dot'), mid, el('b', '', yen(u.pay)));
+        b.addEventListener('click', () => { ms.work = i; $('amount').value = u.pay.toLocaleString('ja-JP'); renderMoney(); });
+        return b;
+      }));
     }
-    chips.push(chip('日付を選ぶ', ms.dateMode === 'pick', () => { ms.dateMode = 'pick'; ms.date = ''; renderMoney(); setTimeout(() => $('workDate').focus(), 50); }));
-    $('dateChips').replaceChildren(...chips);
-    $('workDate').hidden = ms.dateMode !== 'pick';
-    const a = amountValue();
-    if (isSalary && a > 0) {
-      const unitYen = conf.wage * conf.unitMin / 60;
-      $('calc').innerHTML = '労働時間 <b>' + hm(Math.round(a / conf.wage * 60)) + '</b>（' + yen(a) + ' ÷ 時給' + yen(conf.wage) + '）' +
-        (a % unitYen ? '<span class="warn">※ ' + conf.unitMin + '分単位の金額ではありません</span>' : '');
-      $('calc').hidden = false;
-    } else { $('calc').hidden = true; }
+    $('calc').hidden = true;
   }
 
   function collectMoney() {
@@ -633,15 +642,24 @@
     const isSalary = isOut && ms.category === SALARY;
     const d = { kind: tab, category: isOut ? ms.category : '', amount: amountValue(), memo: $('memo').value.trim() };
     if (isOut && !ms.category) return { error: '科目を選んでください。' };
-    if (!d.amount) return { error: '金額を入力してください。' };
     if (isSalary) {
       if (ms.who === null) return { error: '誰の給料かを選んでください。' };
-      if (ms.who === 'other') { d.recipientName = $('otherName').value.trim(); d.recipientId = ''; if (!d.recipientName) return { error: '受け取る人の名前を入力してください。' }; }
-      else { d.recipientName = conf.staff[ms.who].name; d.recipientId = conf.staff[ms.who].userId; }
-      d.workDate = ms.dateMode === 'today' ? ms.date : ($('workDate').value || '').replace(/-/g, '/');
-      if (!d.workDate) return { error: '勤務日を選んでください。' };
+      if (ms.who === 'other') {
+        d.recipientName = $('otherName').value.trim(); d.recipientId = '';
+        if (!d.recipientName) return { error: '受け取る人の名前を入力してください。' };
+        d.workDate = ($('workDate').value || '').replace(/-/g, '/');
+        if (!d.workDate) return { error: '勤務日を選んでください。' };
+        d.workLabel = d.workDate;
+      } else {
+        const p = conf.staff[ms.who];
+        d.recipientName = p.name; d.recipientId = p.userId;
+        if (ms.work === null) return { error: (p.unpaid && p.unpaid.length) ? '未払いの勤務を1つ選んでください。' : 'この人には未払いの勤務がありません。' };
+        const u = p.unpaid[ms.work];
+        d.workDate = u.date; d.workLabel = u.label + '（' + u.detail + '）';
+      }
       if (d.workDate > conf.today) return { error: '勤務日に未来の日付は選べません。' };
     }
+    if (!d.amount) return { error: '金額を入力してください。' };
     if (isOut && ms.category === DJ) {
       const v = digits('djVisitors');
       if (v === '') return { error: '来客数を入力してください。' };
@@ -659,11 +677,10 @@
     if (d.recipientName) rows.push(['受取人', d.recipientName]);
     rows.push(['金額', yen(d.amount)]);
     if (d.visitors !== undefined) rows.push(['来客数', d.visitors + '人']);
-    if (d.workDate) { rows.push(['勤務日', d.workDate]); rows.push(['労働時間', hm(Math.round(d.amount / conf.wage * 60)) + '（時給' + yen(conf.wage) + '）']); }
+    if (d.workDate) rows.push(['勤務', d.workLabel]);
     rows.push(['メモ', d.memo || 'なし']);
     const dl = $('summary'); dl.innerHTML = '';
     rows.forEach(([k, v]) => dl.append(el('dt', '', k), el('dd', '', v)));
-    if (d.workDate && d.amount % (conf.wage * conf.unitMin / 60)) dl.append(el('div', 'warn', '※ ' + conf.unitMin + '分単位の金額ではありません'));
     $('moneyForm').hidden = true; $('moneyConfirm').hidden = false; $('tabs').hidden = true;
     $('moneyBack').hidden = false; $('moneyNext').textContent = '記録する';
     moneyReqId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);   // 押し直しても同じ番号で送る
@@ -772,7 +789,7 @@
     DENOMS.forEach((_, i) => { $('c' + i).value = ''; });
     recalc(); $('reason').value = ''; $('cfMemo').value = '';
     $('amount').value = ''; $('memo').value = ''; $('djVisitors').value = ''; $('otherName').value = ''; $('workDate').value = '';
-    Object.assign(ms, { category: '', who: null, dateMode: '', date: '' });
+    Object.assign(ms, { category: '', who: null, work: null });
     salesVal = null;
     Object.keys(tasksPassed).forEach((k) => delete tasksPassed[k]); taskData = null;
     $('tabs').hidden = false;
