@@ -321,7 +321,7 @@
   </section>
 </div>
 
-<div class="ver">regi 2026-11-08a</div>
+<div class="ver">regi 2026-11-09a</div>
 <!-- 下のボタン（開け・締め） -->
 <div class="bar" id="barCount" hidden>
   <div class="inner">
@@ -366,7 +366,9 @@
 
   let conf = { state: 'none', categories: [], staff: [], wage: 1500, unitMin: 30, today: '' };
   let tab = '';                       // 開け／締め／入金／出金／確認
-  const ms = { category: '', who: null, work: null };   // 入出金の入力状態（work: 選んだ未払いの勤務）
+  const IN_DEFAULT = 'キャッシュレス戻し';
+  const ms = { category: '', inCat: IN_DEFAULT, who: null, work: null };   // 入出金の入力状態（inCat: 入金の科目、work: 選んだ未払いの勤務）
+  const incomeCats = () => conf.incomeCategories || [IN_DEFAULT, 'その他'];
   let listMode = 'now', listData = null;
   const tasksPassed = {};             // { レジ開け: true } … 作業リストを見て「次へ」を押した
   let taskData = null;                // { kind, tasks: [{ task, done, by, time }] }
@@ -612,13 +614,15 @@
   function renderMoney() {
     const isOut = tab === '出金';
     const isSalary = isOut && ms.category === SALARY;
-    $('fCategory').hidden = !isOut;
+    $('fCategory').hidden = false;   // 出金：仕入〜その他／入金：キャッシュレス戻し・その他
     $('fWho').hidden = !isSalary;
     const person = typeof ms.who === 'number' ? conf.staff[ms.who] : null;
     $('fUnpaid').hidden = !(isSalary && person);
     $('fDate').hidden = !(isSalary && ms.who === 'other');
     $('fDjVisitors').hidden = !(isOut && ms.category === DJ);
-    $('categories').replaceChildren(...conf.categories.map((c) => chip(c, ms.category === c, () => { ms.category = c; renderMoney(); })));
+    $('categories').replaceChildren(...(isOut
+      ? conf.categories.map((c) => chip(c, ms.category === c, () => { ms.category = c; renderMoney(); }))
+      : incomeCats().map((c) => chip(c, ms.inCat === c, () => { ms.inCat = c; renderMoney(); }))));
     $('staff').replaceChildren(...conf.staff.map((p, i) => chip(p.label, ms.who === i, () => { ms.who = i; ms.work = null; $('amount').value = ''; renderMoney(); }))
       .concat([chip('その他', ms.who === 'other', () => { ms.who = 'other'; ms.work = null; renderMoney(); })]));
     $('otherName').hidden = ms.who !== 'other';
@@ -640,7 +644,7 @@
   function collectMoney() {
     const isOut = tab === '出金';
     const isSalary = isOut && ms.category === SALARY;
-    const d = { kind: tab, category: isOut ? ms.category : '', amount: amountValue(), memo: $('memo').value.trim() };
+    const d = { kind: tab, category: isOut ? ms.category : ms.inCat, amount: amountValue(), memo: $('memo').value.trim() };
     if (isOut && !ms.category) return { error: '科目を選んでください。' };
     if (isSalary) {
       if (ms.who === null) return { error: '誰の給料かを選んでください。' };
@@ -789,7 +793,7 @@
     DENOMS.forEach((_, i) => { $('c' + i).value = ''; });
     recalc(); $('reason').value = ''; $('cfMemo').value = '';
     $('amount').value = ''; $('memo').value = ''; $('djVisitors').value = ''; $('otherName').value = ''; $('workDate').value = '';
-    Object.assign(ms, { category: '', who: null, work: null });
+    Object.assign(ms, { category: '', inCat: IN_DEFAULT, who: null, work: null });
     salesVal = null;
     Object.keys(tasksPassed).forEach((k) => delete tasksPassed[k]); taskData = null;
     $('tabs').hidden = false;
