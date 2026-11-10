@@ -72,6 +72,17 @@
   .amount { display: flex; align-items: center; gap: 8px; }
   .amount input { font-size: 22px; text-align: right; font-variant-numeric: tabular-nums; }
   .amount span { font-size: 17px; font-weight: 700; }
+  .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .thumbs:empty { display: none; }
+  .thumb { position: relative; width: 84px; height: 84px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: #f1f3f4; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb button { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0;
+    background: rgba(0,0,0,.6); color: #fff; font-size: 16px; line-height: 26px; }
+  .shoot { width: 100%; border: 1.5px dashed var(--green); background: var(--sel); color: #067a36; border-radius: 12px; padding: 12px; font-size: 16px; font-weight: 700; }
+  .shoot:disabled { opacity: .6; }
+  .norc { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 15px; color: var(--text); }
+  .norc input { width: 20px; height: 20px; accent-color: var(--green); }
+  #rcReason { margin-top: 8px; }
   .up { display: grid; gap: 8px; }
   .up button { width: 100%; background: #fff; color: var(--text); border: 1.5px solid var(--line); border-radius: 12px; text-align: left;
     font-size: 15px; padding: 10px 12px; font-weight: 600; display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; }
@@ -278,6 +289,14 @@
         </div>
         <div class="calc" id="calc" hidden></div>
       </div>
+      <div class="field" id="fReceipt" hidden>
+        <div class="label">レシート（<span id="rcCount">0</span>/<span id="rcMax">3</span>枚）</div>
+        <div class="thumbs" id="thumbs"></div>
+        <button type="button" class="shoot" id="rcShoot">📷 レシートを撮る</button>
+        <input type="file" id="rcFile" accept="image/*" capture="environment" hidden>
+        <label class="norc" id="rcNoneWrap"><input type="checkbox" id="rcNone"> レシートなし</label>
+        <input type="text" id="rcReason" class="other" placeholder="理由（例：もらい忘れ）" maxlength="100" hidden>
+      </div>
       <div class="field" id="fDjVisitors" hidden>
         <div class="label">来客数</div>
         <div class="amount">
@@ -321,7 +340,7 @@
   </section>
 </div>
 
-<div class="ver">regi 2026-11-09a</div>
+<div class="ver">regi 2026-11-10a</div>
 <!-- 下のボタン（開け・締め） -->
 <div class="bar" id="barCount" hidden>
   <div class="inner">
@@ -367,7 +386,7 @@
   let conf = { state: 'none', categories: [], staff: [], wage: 1500, unitMin: 30, today: '' };
   let tab = '';                       // 開け／締め／入金／出金／確認
   const IN_DEFAULT = 'キャッシュレス戻し';
-  const ms = { category: '', inCat: IN_DEFAULT, who: null, work: null };   // 入出金の入力状態（inCat: 入金の科目、work: 選んだ未払いの勤務）
+  const ms = { category: '', inCat: IN_DEFAULT, who: null, work: null, photos: [], noRc: false };   // 入出金の入力状態（inCat: 入金の科目、work: 選んだ未払いの勤務）
   const incomeCats = () => conf.incomeCategories || [IN_DEFAULT, 'その他'];
   let listMode = 'now', listData = null;
   const tasksPassed = {};             // { レジ開け: true } … 作業リストを見て「次へ」を押した
@@ -611,7 +630,46 @@
   function chip(label, on, onClick) { const b = el('button', 'chip' + (on ? ' on' : ''), label); b.addEventListener('click', onClick); return b; }
   function amountValue() { return Number($('amount').value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[^\d]/g, '')) || 0; }
 
+  // ----- レシートの写真（仕入・備品の出金だけ。最大3枚。縮めてから送る） -----
+  const rcCats = () => conf.receiptCategories || ['仕入', '備品'];
+  const rcMax = () => conf.receiptMax || 3;
+  const needReceipt = () => tab === '出金' && rcCats().includes(ms.category);
+  function shrink(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1600, k = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
+      img.src = url;
+    });
+  }
+  function renderReceipt() {
+    const show = needReceipt();
+    $('fReceipt').hidden = !show;
+    if (!show) return;
+    $('rcCount').textContent = ms.photos.length; $('rcMax').textContent = rcMax();
+    $('thumbs').replaceChildren(...ms.photos.map((src, i) => {
+      const t = el('div', 'thumb'); const im = document.createElement('img'); im.src = src; im.alt = 'レシート' + (i + 1);
+      const x = el('button', '', '×'); x.type = 'button'; x.setAttribute('aria-label', (i + 1) + '枚目を消す');
+      x.addEventListener('click', () => { ms.photos.splice(i, 1); renderReceipt(); });
+      t.append(im, x); return t;
+    }));
+    $('rcShoot').hidden = ms.noRc || ms.photos.length >= rcMax();
+    $('rcShoot').textContent = ms.photos.length ? '📷 もう1枚撮る' : '📷 レシートを撮る';
+    $('rcNoneWrap').hidden = ms.photos.length > 0;
+    $('rcNone').checked = ms.noRc;
+    $('rcReason').hidden = !ms.noRc;
+  }
+
   function renderMoney() {
+    renderReceipt();
     const isOut = tab === '出金';
     const isSalary = isOut && ms.category === SALARY;
     $('fCategory').hidden = false;   // 出金：仕入〜その他／入金：キャッシュレス戻し・その他
@@ -664,6 +722,13 @@
       if (d.workDate > conf.today) return { error: '勤務日に未来の日付は選べません。' };
     }
     if (!d.amount) return { error: '金額を入力してください。' };
+    if (needReceipt()) {
+      if (ms.photos.length) d.photos = ms.photos.slice(0, rcMax());
+      else if (ms.noRc) {
+        d.noReceipt = $('rcReason').value.trim();
+        if (!d.noReceipt) return { error: 'レシートがない理由を入力してください。' };
+      } else return { error: 'レシートの写真を撮ってください。（ないときは「レシートなし」に✓を入れて理由を入力）' };
+    }
     if (isOut && ms.category === DJ) {
       const v = digits('djVisitors');
       if (v === '') return { error: '来客数を入力してください。' };
@@ -682,6 +747,8 @@
     rows.push(['金額', yen(d.amount)]);
     if (d.visitors !== undefined) rows.push(['来客数', d.visitors + '人']);
     if (d.workDate) rows.push(['勤務', d.workLabel]);
+    if (d.photos) rows.push(['レシート', d.photos.length + '枚']);
+    if (d.noReceipt) rows.push(['レシート', 'なし（' + d.noReceipt + '）']);
     rows.push(['メモ', d.memo || 'なし']);
     const dl = $('summary'); dl.innerHTML = '';
     rows.forEach(([k, v]) => dl.append(el('dt', '', k), el('dd', '', v)));
@@ -712,7 +779,7 @@
   function itemRow(it, canCancel) {
     const isRegi = it.type === 'open' || it.type === 'close';
     const row = el('div', 'item' + (isRegi ? ' regi r-' + it.type : '') + (it.cancelled ? ' cancelled' : ''));
-    row.append(el('div', 'what', it.label));
+    row.append(el('div', 'what', it.label + (it.receipt === 'photo' ? ' 📷' : it.receipt === 'none' ? '（レシートなし）' : '')));
     const amt = el('div', 'amt' + (it.type === 'in' ? ' in' : it.type === 'out' ? ' out' : ''));
     amt.textContent = it.type === 'in' ? '+' + it.amount.toLocaleString('ja-JP') : it.type === 'out' ? '−' + it.amount.toLocaleString('ja-JP') : yen(it.amount);
     const meta = el('div', 'meta', it.time + '・' + it.name + (it.note ? '・' + it.note : ''));
@@ -793,7 +860,8 @@
     DENOMS.forEach((_, i) => { $('c' + i).value = ''; });
     recalc(); $('reason').value = ''; $('cfMemo').value = '';
     $('amount').value = ''; $('memo').value = ''; $('djVisitors').value = ''; $('otherName').value = ''; $('workDate').value = '';
-    Object.assign(ms, { category: '', inCat: IN_DEFAULT, who: null, work: null });
+    Object.assign(ms, { category: '', inCat: IN_DEFAULT, who: null, work: null, photos: [], noRc: false });
+    $('rcReason').value = '';
     salesVal = null;
     Object.keys(tasksPassed).forEach((k) => delete tasksPassed[k]); taskData = null;
     $('tabs').hidden = false;
@@ -835,6 +903,16 @@
   $('cfCancel').addEventListener('click', () => { $('cf').hidden = true; $('barCount').hidden = false; setCountInputs(true); $('countSubmit').textContent = '送信する'; window.scrollTo({ top: 0, behavior: 'smooth' }); });
   $('amount').addEventListener('input', () => { const v = amountValue(); $('amount').value = v ? v.toLocaleString('ja-JP') : ''; renderMoney(); });
   $('moneyNext').addEventListener('click', () => ($('moneyConfirm').hidden ? toMoneyConfirm() : moneySubmit()));
+  $('rcShoot').addEventListener('click', () => $('rcFile').click());
+  $('rcFile').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    $('rcShoot').disabled = true; $('rcShoot').textContent = '写真を準備中…';
+    try { ms.photos.push(await shrink(f)); ms.noRc = false; hideMsg(); }
+    catch (err) { showMsg('写真を読み込めませんでした。もう一度撮ってください。', 'ng'); }
+    finally { $('rcShoot').disabled = false; renderReceipt(); }
+  });
+  $('rcNone').addEventListener('change', (e) => { ms.noRc = e.target.checked; renderReceipt(); if (ms.noRc) $('rcReason').focus(); });
   $('moneyBack').addEventListener('click', toMoneyForm);
   $('lNow').addEventListener('click', () => { listMode = 'now'; renderList(); });
   $('lWeek').addEventListener('click', () => { listMode = 'week'; renderList(); });
