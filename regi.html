@@ -80,6 +80,8 @@
     background: rgba(0,0,0,.6); color: #fff; font-size: 16px; line-height: 26px; }
   .shoot { width: 100%; border: 1.5px dashed var(--green); background: var(--sel); color: #067a36; border-radius: 12px; padding: 12px; font-size: 16px; font-weight: 700; }
   .shoot:disabled { opacity: .6; }
+  .shootRow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .shootRow[hidden] { display: none; }
   .norc { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 15px; color: var(--text); }
   .norc input { width: 20px; height: 20px; accent-color: var(--green); }
   #rcReason { margin-top: 8px; }
@@ -292,8 +294,12 @@
       <div class="field" id="fReceipt" hidden>
         <div class="label">レシート（<span id="rcCount">0</span>/<span id="rcMax">3</span>枚）</div>
         <div class="thumbs" id="thumbs"></div>
-        <button type="button" class="shoot" id="rcShoot">📷 レシートを撮る</button>
+        <div class="shootRow" id="rcButtons">
+          <button type="button" class="shoot" id="rcShoot">📷 撮る</button>
+          <button type="button" class="shoot" id="rcPick">🖼 写真から選ぶ</button>
+        </div>
         <input type="file" id="rcFile" accept="image/*" capture="environment" hidden>
+        <input type="file" id="rcFilePick" accept="image/*" multiple hidden>
         <label class="norc" id="rcNoneWrap"><input type="checkbox" id="rcNone"> レシートなし</label>
         <input type="text" id="rcReason" class="other" placeholder="理由（例：もらい忘れ）" maxlength="100" hidden>
       </div>
@@ -340,7 +346,7 @@
   </section>
 </div>
 
-<div class="ver">regi 2026-11-10a</div>
+<div class="ver">regi 2026-11-10b</div>
 <!-- 下のボタン（開け・締め） -->
 <div class="bar" id="barCount" hidden>
   <div class="inner">
@@ -661,8 +667,7 @@
       x.addEventListener('click', () => { ms.photos.splice(i, 1); renderReceipt(); });
       t.append(im, x); return t;
     }));
-    $('rcShoot').hidden = ms.noRc || ms.photos.length >= rcMax();
-    $('rcShoot').textContent = ms.photos.length ? '📷 もう1枚撮る' : '📷 レシートを撮る';
+    $('rcButtons').hidden = ms.noRc || ms.photos.length >= rcMax();
     $('rcNoneWrap').hidden = ms.photos.length > 0;
     $('rcNone').checked = ms.noRc;
     $('rcReason').hidden = !ms.noRc;
@@ -727,7 +732,7 @@
       else if (ms.noRc) {
         d.noReceipt = $('rcReason').value.trim();
         if (!d.noReceipt) return { error: 'レシートがない理由を入力してください。' };
-      } else return { error: 'レシートの写真を撮ってください。（ないときは「レシートなし」に✓を入れて理由を入力）' };
+      } else return { error: 'レシートの写真を撮るか、写真から選んでください。（ないときは「レシートなし」に✓を入れて理由を入力）' };
     }
     if (isOut && ms.category === DJ) {
       const v = digits('djVisitors');
@@ -904,14 +909,21 @@
   $('amount').addEventListener('input', () => { const v = amountValue(); $('amount').value = v ? v.toLocaleString('ja-JP') : ''; renderMoney(); });
   $('moneyNext').addEventListener('click', () => ($('moneyConfirm').hidden ? toMoneyConfirm() : moneySubmit()));
   $('rcShoot').addEventListener('click', () => $('rcFile').click());
-  $('rcFile').addEventListener('change', async (e) => {
-    const f = e.target.files && e.target.files[0]; e.target.value = '';
-    if (!f) return;
-    $('rcShoot').disabled = true; $('rcShoot').textContent = '写真を準備中…';
-    try { ms.photos.push(await shrink(f)); ms.noRc = false; hideMsg(); }
-    catch (err) { showMsg('写真を読み込めませんでした。もう一度撮ってください。', 'ng'); }
-    finally { $('rcShoot').disabled = false; renderReceipt(); }
-  });
+  $('rcPick').addEventListener('click', () => $('rcFilePick').click());
+  async function addPhotos(e) {
+    const files = Array.from(e.target.files || []); e.target.value = '';
+    if (!files.length) return;
+    const room = rcMax() - ms.photos.length;
+    $('rcShoot').disabled = $('rcPick').disabled = true;
+    try {
+      for (const f of files.slice(0, room)) ms.photos.push(await shrink(f));
+      ms.noRc = false;
+      if (files.length > room) showMsg('レシートは' + rcMax() + '枚までです。最初の' + room + '枚を使います。', 'ng'); else hideMsg();
+    } catch (err) { showMsg('写真を読み込めませんでした。もう一度お試しください。', 'ng'); }
+    finally { $('rcShoot').disabled = $('rcPick').disabled = false; renderReceipt(); }
+  }
+  $('rcFile').addEventListener('change', addPhotos);
+  $('rcFilePick').addEventListener('change', addPhotos);
   $('rcNone').addEventListener('change', (e) => { ms.noRc = e.target.checked; renderReceipt(); if (ms.noRc) $('rcReason').focus(); });
   $('moneyBack').addEventListener('click', toMoneyForm);
   $('lNow').addEventListener('click', () => { listMode = 'now'; renderList(); });
