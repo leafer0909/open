@@ -10,6 +10,7 @@
   開いたときにレジの状態（開け中／締め後）を表示し、状態に合わせてボタンの並びを変えます。
     開け中 … [出金][入金][レジ締め][確認]
     締め後 … [レジ開け][入金][出金][確認]
+  レジ締めの売上（現金・キャッシュレス）は Square から自動で取ります。取れないときだけ、その場で手入力に切り替わります。
 
   ■ 設定 … このファイルは書き換えません。同じフォルダの config.js に GAS_URL と LIFF ID を書きます
 -->
@@ -108,7 +109,8 @@
   .cf { background: var(--card); border-radius: 12px; padding: 16px; margin-top: 14px; }
   .cf .line { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; font-variant-numeric: tabular-nums; }
   .cf .line > span { color: var(--sub); }
-  .cf .line b { font-size: 20px; }
+  .cf .line b { font-size: 20px; white-space: nowrap; }
+  .cf .sqhead { font-size: 13px; font-weight: 700; color: var(--sub); margin-top: 2px; }
   .cf .diff { font-size: 15px; font-weight: 700; margin-left: 6px; }
   .cf .diff.minus { color: var(--red); }
   .cf .diff.plus { color: #b26a00; }
@@ -199,7 +201,7 @@
     <p class="muted" style="margin-top:10px">済んだ作業をタップしてください。もう一度タップすると外せます。</p>
   </section>
 
-  <!-- 締め：売上の入力（Squareと連動するまでの暫定） -->
+  <!-- 締め：来客数（Squareから売上が取れないとき・Square未設定のときは、売上も手入力） -->
   <section id="vSales" hidden>
     <button class="taskLine" data-tasks hidden></button>
     <div class="card">
@@ -227,7 +229,7 @@
       </div>
       <div class="field salesTotal" id="fTotal"><span>総売上</span><b id="salesTotal">0円</b></div>
     </div>
-    <p class="muted" style="margin-top:10px" id="salesHelp">Squareの端末に出ている今回の営業の売上と、来客数を入力してください（売上がなければ 0）。<br>次に、金種ごとの枚数を入力します。</p>
+    <p class="muted" style="margin-top:10px" id="salesHelp">来客数を入力してください。</p>
   </section>
 
   <!-- 開け・締め：金種入力 -->
@@ -246,8 +248,9 @@
       <div class="line"><span>レジ締め金額</span><b id="cfClose"></b></div>
       <div class="line"><span>予想レジ金額</span><b><span id="cfExpected"></span><span class="diff" id="cfDiff"></span></b></div>
       <div class="gap"></div>
-      <div class="line"><span id="cfSquareLabel">現金売上（Square入力分）</span><b id="cfSquare"></b></div>
-      <div class="line" id="cfCashlessLine" hidden><span>キャッシュレス（手入力）</span><b id="cfCashless"></b></div>
+      <div class="sqhead" id="cfSqHead" hidden></div>
+      <div class="line"><span id="cfSquareLabel">現金売上（Square）</span><b id="cfSquare"></b></div>
+      <div class="line" id="cfCashlessLine" hidden><span id="cfCashlessLabel">キャッシュレス（Square）</span><b id="cfCashless"></b></div>
       <div class="line" id="cfTotalLine" hidden><span>総売上</span><b id="cfTotal"></b></div>
       <div class="line" id="cfVisitorsLine" hidden><span>来客数</span><b id="cfVisitors"></b></div>
       <div class="note" id="cfNote"></div>
@@ -342,7 +345,7 @@
   </section>
 </div>
 
-<div class="ver">regi 2026-11-10c</div>
+<div class="ver">regi 2026-11-18a</div>
 <!-- 下のボタン（開け・締め） -->
 <div class="bar" id="barCount" hidden>
   <div class="inner">
@@ -356,7 +359,7 @@
     <button class="primary" id="tasksNext">次へ</button>
   </div>
 </div>
-<!-- 下のボタン（締め：現金売上） -->
+<!-- 下のボタン（締め：来客数・売上） -->
 <div class="bar" id="barSales" hidden>
   <div class="inner">
     <button class="primary" id="salesNext">次へ（枚数の入力）</button>
@@ -395,8 +398,10 @@
   let taskData = null;                // { kind, tasks: [{ task, done, by, time }] }
   const taskKind = () => (tab === 'レジ開け' ? '開店' : '閉店');
   let moneyReqId = '';                 // 入出金の受付番号（二重記録を防ぐ）
-  let salesVal = null;                // レジ締めの前に入力した { cash, cashless, visitors }（売上はSquare未設定の間だけ）
-  const askSales = () => tab === 'レジ締め' && conf.askSales;
+  let salesVal = null;                // レジ締めの前に入力した { cash, cashless, visitors }（売上は手入力のときだけ）
+  let manualFallback = false;         // Squareから売上が取れなかったので、今回は手入力にした
+  let keepVisitors = null;            // 手入力に切り替えたとき、入力済みの来客数を残す
+  const askSales = () => tab === 'レジ締め' && (conf.askSales || manualFallback);
   const isClose = () => tab === 'レジ締め';
 
   async function api(payload) {
@@ -438,18 +443,24 @@
     $('vSales').hidden = !needSales; $('barSales').hidden = !needSales;
     $('vCount').hidden = !isCount || needSales; $('barCount').hidden = !isCount || needSales;
     $('salesLine').hidden = !(isCount && isClose() && salesVal !== null);
-    if (salesVal !== null) $('salesShow').innerHTML = (conf.askSales ? '現金 <b>' + yen(salesVal.cash) + '</b><br>キャッシュレス <b>' + yen(salesVal.cashless) + '</b><br>' : '') +
+    if (salesVal !== null) $('salesShow').innerHTML = (askSales() ? '現金 <b>' + yen(salesVal.cash) + '</b><br>キャッシュレス <b>' + yen(salesVal.cashless) + '</b><br>' : '') +
       '来客数 <b>' + salesVal.visitors + '人</b>';
     if (needSales) {
-      ['fCash', 'fCashless', 'fTotal'].forEach((id) => ($(id).hidden = !conf.askSales));
-      $('salesHelp').innerHTML = conf.askSales ? 'Squareの端末に出ている今回の営業の売上と、来客数を入力してください（売上がなければ 0）。<br>次に、金種ごとの枚数を入力します。' : '来客数を入力してください。<br>次に、金種ごとの枚数を入力します。';
+      const ask = askSales();
+      ['fCash', 'fCashless', 'fTotal'].forEach((id) => ($(id).hidden = !ask));
+      $('salesHelp').innerHTML = manualFallback
+        ? 'Squareから売上を取れなかったため、Squareの端末に出ている今回の営業の売上を入力してください（売上がなければ 0）。<br>次に、金種ごとの枚数を入力します。'
+        : ask ? 'Squareの端末に出ている今回の営業の売上と、来客数を入力してください（売上がなければ 0）。<br>次に、金種ごとの枚数を入力します。'
+        : '来客数を入力してください。売上はSquareから自動で取ります。<br>次に、金種ごとの枚数を入力します。';
       $('salesInput').value = ''; $('cashlessInput').value = '';
-      const dv = conf.djVisitors;
+      const dv = keepVisitors !== null ? keepVisitors : conf.djVisitors;
       $('visitorsInput').value = dv === null || dv === undefined ? '' : String(dv);
-      $('visitorsNote').textContent = dv === null || dv === undefined ? '' : 'DJの出金で入力した来客数の合計です。違っていれば直してください。';
-      $('visitorsNote').hidden = dv === null || dv === undefined;
+      const djNote = keepVisitors === null && dv !== null && dv !== undefined;
+      $('visitorsNote').textContent = djNote ? 'DJの出金で入力した来客数の合計です。違っていれば直してください。' : '';
+      $('visitorsNote').hidden = !djNote;
+      keepVisitors = null;
       salesTotal();
-      setTimeout(() => $(conf.askSales ? 'salesInput' : 'visitorsInput').focus(), 50);
+      setTimeout(() => $(ask ? 'salesInput' : 'visitorsInput').focus(), 50);
     }
     $('vMoney').hidden = !isMoney; $('barMoney').hidden = !isMoney;
     $('vList').hidden = t !== '確認';
@@ -559,6 +570,20 @@
   }
   const setCountInputs = (on) => document.querySelectorAll('#table input').forEach((x) => (x.disabled = !on));
   const regiKind = () => tab;   // タブ名がそのまま区分（レジ開け／レジ締め）
+  const salesPayload = () => ({
+    manualSales: askSales() ? salesVal.cash : undefined, manualCashless: askSales() ? salesVal.cashless : undefined,
+    visitors: isClose() ? salesVal.visitors : undefined
+  });
+
+  // Squareから売上が取れなかった：売上の手入力に切り替える（金種の枚数・来客数はそのまま）
+  function toManualSales(message) {
+    keepVisitors = salesVal ? salesVal.visitors : null;
+    manualFallback = true;
+    salesVal = null;
+    selectTab('レジ締め');
+    window.scrollTo(0, 0);
+    showMsg(message, 'ng');
+  }
 
   async function countSubmit() {
     const c = counts();
@@ -567,11 +592,12 @@
     const reason = $('reason').value.trim();
     if (needReason && !reason) { showMsg('合わない理由を入力してください。', 'ng'); $('reason').focus(); return; }
     $('countSubmit').disabled = true;
-    $('countSubmit').textContent = tab === 'レジ締め' ? 'Squareの売上を確認中…' : '送信中…';
+    $('countSubmit').textContent = tab === 'レジ締め' && !askSales() ? 'Squareの売上を確認中…' : '送信中…';
     try {
-      const d = await api({ action: 'regi_submit', kind: regiKind(), counts: c, reason: needReason ? reason : '', manualSales: askSales() ? salesVal.cash : undefined, manualCashless: askSales() ? salesVal.cashless : undefined, visitors: isClose() ? salesVal.visitors : undefined });
+      const d = await api(Object.assign({ action: 'regi_submit', kind: regiKind(), counts: c, reason: needReason ? reason : '' }, salesPayload()));
       if (d.ok && d.preview) { showCloseConfirm(d); }
       else if (d.ok) { finished(d.message, regiKind() + 'を記録しました（' + yen(c.reduce((s, n, i) => s + n * DENOMS[i], 0)) + '）', regiKind() + 'を記録しました'); }
+      else if (d.needManual) { $('countSubmit').textContent = '送信する'; toManualSales(d.message); }
       else {
         showMsg(d.message, 'ng');
         if (d.needReason) { $('reasonBox').hidden = false; $('countSubmit').textContent = '理由を付けて記録'; }
@@ -596,14 +622,18 @@
       $('cfDiff').textContent = '（' + (d.diff > 0 ? '+' : d.diff < 0 ? '−' : '±') + Math.abs(d.diff).toLocaleString('ja-JP') + '）';
       $('cfDiff').className = 'diff ' + (d.diff < 0 ? 'minus' : d.diff > 0 ? 'plus' : '');
     } else { $('cfExpected').textContent = '—'; $('cfDiff').textContent = ''; }
+    const sq = d.sq;
     $('cfSquare').textContent = (d.square !== null && d.square !== undefined) ? yen(d.square) : '—';
-    $('cfSquareLabel').textContent = d.manual ? '現金売上（手入力）' : '現金売上（Square入力分）';
-    const hasCl = d.manual && d.cashless !== null && d.cashless !== undefined;
+    $('cfSqHead').hidden = !sq;
+    if (sq) $('cfSqHead').textContent = 'Squareの売上（' + sq.from + '〜' + sq.to + '）';
+    $('cfSquareLabel').textContent = sq ? '現金（' + sq.cashCount + '件）' : '現金売上（手入力）';
+    $('cfCashlessLabel').textContent = sq ? 'キャッシュレス（' + sq.cashlessCount + '件）' : 'キャッシュレス（手入力）';
+    const hasCl = d.cashless !== null && d.cashless !== undefined;
     $('cfCashlessLine').hidden = !hasCl; $('cfTotalLine').hidden = !hasCl;
     $('cfVisitorsLine').hidden = d.visitors === null || d.visitors === undefined;
     if (!$('cfVisitorsLine').hidden) $('cfVisitors').textContent = d.visitors + '人';
     if (hasCl) { $('cfCashless').textContent = yen(d.cashless); $('cfTotal').textContent = yen((d.square || 0) + d.cashless); }
-    $('cfNote').textContent = d.note || (d.squareError ? 'Squareの売上を取得できませんでした。このまま記録して、あとで取り直すことができます。' : '');
+    $('cfNote').textContent = d.note || (sq ? (sq.refunds ? '返金 ' + sq.refunds + '件を差し引き済み。\n' : '') + '未会計の伝票があれば、先に会計してから締めてください。' : '');
     $('cfMemoBox').hidden = true; $('cfMemoBtn').hidden = false; $('cfYes').textContent = 'はい';
     $('cf').hidden = false;
     $('cf').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -617,8 +647,9 @@
     $('cfYes').textContent = '記録中…';
     try {
       const c = counts();
-      const d = await api({ action: 'regi_submit', kind: 'レジ締め', counts: c, confirm: true, memo: memo, manualSales: askSales() ? salesVal.cash : undefined, manualCashless: askSales() ? salesVal.cashless : undefined, visitors: isClose() ? salesVal.visitors : undefined });
+      const d = await api(Object.assign({ action: 'regi_submit', kind: 'レジ締め', counts: c, confirm: true, memo: memo }, salesPayload()));
       if (d.ok) finished(d.message, 'レジ締めを記録しました（' + yen(c.reduce((s, n, i) => s + n * DENOMS[i], 0)) + '）', 'レジ締めを記録しました');
+      else if (d.needManual) { $('cf').hidden = true; toManualSales(d.message); }
       else { showMsg(d.message, 'ng'); $('cfYes').textContent = memoOpen ? 'メモを付けて記録' : 'はい'; }
     } catch (e) {
       showMsg('通信に失敗しました。もう一度お試しください。', 'ng');
@@ -863,7 +894,7 @@
     $('amount').value = ''; $('memo').value = ''; $('djVisitors').value = ''; $('otherName').value = ''; $('workDate').value = '';
     Object.assign(ms, { category: '', inCat: IN_DEFAULT, who: null, work: null, photos: [], noRc: false });
     $('rcReason').value = '';
-    salesVal = null;
+    salesVal = null; manualFallback = false; keepVisitors = null;
     Object.keys(tasksPassed).forEach((k) => delete tasksPassed[k]); taskData = null;
     $('tabs').hidden = false;
     try {
@@ -884,8 +915,9 @@
   $('visitorsInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('salesNext').click(); } });
   $('salesNext').addEventListener('click', () => {
     const c = digits('salesInput'), cl = digits('cashlessInput'), vi = digits('visitorsInput');
-    if (conf.askSales && c === '') { showMsg('現金売上を入力してください（なければ 0）。', 'ng'); $('salesInput').focus(); return; }
-    if (conf.askSales && cl === '') { showMsg('キャッシュレス売上を入力してください（なければ 0）。', 'ng'); $('cashlessInput').focus(); return; }
+    const ask = askSales();
+    if (ask && c === '') { showMsg('現金売上を入力してください（なければ 0）。', 'ng'); $('salesInput').focus(); return; }
+    if (ask && cl === '') { showMsg('キャッシュレス売上を入力してください（なければ 0）。', 'ng'); $('cashlessInput').focus(); return; }
     if (vi === '') { showMsg('来客数を入力してください。', 'ng'); $('visitorsInput').focus(); return; }
     salesVal = { cash: Number(c) || 0, cashless: Number(cl) || 0, visitors: Number(vi) };
     selectTab('レジ締め');
