@@ -141,6 +141,14 @@
   .ctag { display: inline-block; margin-left: 6px; font-size: 11.5px; font-weight: 700; color: var(--red); background: var(--red-bg); border-radius: 4px; padding: 0 5px; }
   .cancelBtn { grid-column: 1 / -1; justify-self: end; margin-top: 6px; border: 1px solid var(--line); background: var(--card); color: var(--red); border-radius: 8px; padding: 5px 12px; font-size: 13px; font-weight: 600; }
   .empty { padding: 18px 0; text-align: center; color: var(--sub); font-size: 14px; }
+  .bal { background: var(--card); border: 1.5px solid #8fd9ad; border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; }
+  .bal .bhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .bal .bhead span { color: var(--sub); font-size: 14px; font-weight: 600; }
+  .bal .bhead b { font-size: 24px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .bal .brow { display: flex; justify-content: space-between; font-size: 13px; color: var(--sub); padding: 2px 0; font-variant-numeric: tabular-nums; }
+  .bal .bsep { border-top: 1px solid var(--line); margin: 7px 0 5px; }
+  .bal .bnote { font-size: 12px; color: #9aa1a8; margin-top: 6px; }
+  .bal .berr { font-size: 13px; color: var(--warn); margin-top: 6px; }
   .reload { width: 100%; margin-top: 12px; border: 0; border-radius: 12px; padding: 12px; font-size: 15px; background: #e9ecef; color: var(--text); }
 
   .msg { white-space: pre-line; line-height: 1.6; border-radius: 12px; padding: 14px; margin-top: 14px; background: var(--card); }
@@ -345,7 +353,7 @@
   </section>
 </div>
 
-<div class="ver">regi 2026-11-18a</div>
+<div class="ver">regi 2026-11-21a</div>
 <!-- 下のボタン（開け・締め） -->
 <div class="bar" id="barCount" hidden>
   <div class="inner">
@@ -841,6 +849,7 @@
     const emptyCard = (text) => { const c = el('div', 'list'); c.append(el('div', 'empty', text)); box.append(c); };
     if (!listData) { emptyCard('読み込み中…'); return; }
     if (listMode === 'now') {
+      if (listData.balance) box.append(balanceCard(listData.balance));
       const card = el('div', 'list');
       if (!listData.current.length) card.append(el('div', 'empty', 'レジの記録がまだありません。'));
       listData.current.forEach((it) => card.append(itemRow(it, true)));
@@ -856,6 +865,31 @@
         wrap.append(card); box.append(wrap);
       });
     }
+  }
+  // 今のレジ残高（開け中は推定、締め後は締めの金額＋入出金）
+  function balanceCard(b) {
+    const n = (v) => Number(v).toLocaleString('ja-JP');
+    const card = el('div', 'bal');
+    const head = el('div', 'bhead');
+    const open = b.kind === 'open';
+    head.append(el('span', '', open ? '今のレジ残高（推定）' : '締めのあとのレジ残高'));
+    if (b.total !== undefined && b.total !== null) head.append(el('b', '', yen(b.total)));
+    card.append(head);
+    const row = (label, value) => { const r = el('div', 'brow'); r.append(el('span', '', label), el('span', '', value)); card.append(r); };
+    card.append(el('div', 'bsep'));
+    row((open ? 'レジ開け ' : 'レジ締め ') + b.baseTime, n(b.base));
+    if (open && b.cash !== undefined) row('＋ 現金売上（Square・' + b.cashCount + '件）', n(b.cash));
+    row('＋ 入金', n(b.inSum));
+    row('− 出金', n(b.outSum));
+    if (open && b.cashless !== undefined) {
+      card.append(el('div', 'bsep'));
+      row('キャッシュレス ' + n(b.cashless) + '（' + b.cashlessCount + '件）', '総売上 ' + n(b.cash + b.cashless));
+    }
+    if (b.error) card.append(el('div', 'berr', b.error));
+    else card.append(el('div', 'bnote', open
+      ? b.at + ' 時点・Squareで会計済みの分だけ' + (b.refunds ? '（返金 ' + b.refunds + '件を差し引き済み）' : '')
+      : '次のレジ開けでは、この金額になるはずです'));
+    return card;
   }
   async function loadList() {
     listData = null; renderList();
