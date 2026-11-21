@@ -42,6 +42,7 @@
   /* タブ */
   .seg { display: grid; grid-template-columns: repeat(4, 1fr); background: #eceef0; border-radius: 10px; padding: 3px; margin-bottom: 14px; }
   .seg.two { grid-template-columns: 1fr 1fr; }
+  .seg.three { grid-template-columns: repeat(3, 1fr); }
   .seg button { border: 0; background: none; padding: 10px 2px; font-size: 15px; white-space: nowrap; font-weight: 700; border-radius: 8px; color: var(--sub); }
   .seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 
@@ -149,6 +150,24 @@
   .bal .bsep { border-top: 1px solid var(--line); margin: 7px 0 5px; }
   .bal .bnote { font-size: 12px; color: #9aa1a8; margin-top: 6px; }
   .bal .berr { font-size: 13px; color: var(--warn); margin-top: 6px; }
+  .ssum { background: var(--card); border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; }
+  .ssum .shead { font-size: 13px; color: var(--sub); font-weight: 700; }
+  .ssum .sbig { display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px; }
+  .ssum .sbig span { font-size: 14px; color: var(--sub); font-weight: 600; }
+  .ssum .sbig b { font-size: 26px; font-variant-numeric: tabular-nums; }
+  .ssum .ssub { font-size: 13px; color: var(--sub); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .ssum .sgoal { display: flex; justify-content: space-between; align-items: baseline; margin-top: 12px; font-size: 14px; font-weight: 600; }
+  .ssum .sgoal b { font-size: 18px; }
+  .gbar { height: 10px; background: #e9ecef; border-radius: 999px; overflow: hidden; margin: 6px 0 4px; }
+  .gbar i { display: block; height: 100%; background: var(--green); border-radius: 999px; }
+  .ssum .sok { color: #0b6b31; font-weight: 700; }
+  .ssum .sng { color: var(--warn); font-weight: 700; }
+  .wds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 10px; background: var(--card); border-radius: 14px; padding: 10px 14px; margin-bottom: 12px; }
+  .wds div { font-size: 13px; color: var(--sub); white-space: nowrap; }
+  .wds b { color: var(--text); font-variant-numeric: tabular-nums; margin-left: 4px; }
+  .item .amt.goal { color: #0b6b31; }
+  .item .staff { grid-column: 1 / -1; font-size: 12.5px; color: var(--sub); }
+  .item.off .what, .item.off .amt { color: #9aa1a8; font-weight: 400; }
   .reload { width: 100%; margin-top: 12px; border: 0; border-radius: 12px; padding: 12px; font-size: 15px; background: #e9ecef; color: var(--text); }
 
   .msg { white-space: pre-line; line-height: 1.6; border-radius: 12px; padding: 14px; margin-top: 14px; background: var(--card); }
@@ -330,9 +349,10 @@
 
   <!-- 確認 -->
   <section id="vList" hidden>
-    <div class="seg two">
+    <div class="seg three">
       <button class="on" id="lNow">今の営業</button>
       <button id="lWeek">過去1週間</button>
+      <button id="lSales">売上</button>
     </div>
     <div id="list"></div>
     <button class="reload" id="reload">最新の状態にする</button>
@@ -353,7 +373,7 @@
   </section>
 </div>
 
-<div class="ver">regi 2026-11-21a</div>
+<div class="ver">regi 2026-11-21b</div>
 <!-- 下のボタン（開け・締め） -->
 <div class="bar" id="barCount" hidden>
   <div class="inner">
@@ -402,6 +422,8 @@
   const ms = { category: '', inCat: IN_DEFAULT, who: null, work: null, photos: [], noRc: false };   // 入出金の入力状態（inCat: 入金の科目、work: 選んだ未払いの勤務）
   const incomeCats = () => conf.incomeCategories || [IN_DEFAULT, 'その他'];
   let listMode = 'now', listData = null;
+  let salesMonth = 'this';            // 売上：this 今月／prev 先月
+  const salesData = {};               // 売上：読み込んだ月の中身
   const tasksPassed = {};             // { レジ開け: true } … 作業リストを見て「次へ」を押した
   let taskData = null;                // { kind, tasks: [{ task, done, by, time }] }
   const taskKind = () => (tab === 'レジ開け' ? '開店' : '閉店');
@@ -474,7 +496,7 @@
     $('vList').hidden = t !== '確認';
     if (isCount) { $('cf').hidden = true; $('reasonBox').hidden = true; setCountInputs(true); $('countSubmit').textContent = '送信する'; }
     if (isMoney) { toMoneyForm(); renderMoney(); }
-    if (t === '確認') loadList();
+    if (t === '確認') { loadList(); if (listMode === 'sales') loadSales(); }
   }
 
   // ===== やることリスト =====
@@ -845,7 +867,9 @@
   function renderList() {
     $('lNow').classList.toggle('on', listMode === 'now');
     $('lWeek').classList.toggle('on', listMode === 'week');
+    $('lSales').classList.toggle('on', listMode === 'sales');
     const box = $('list'); box.innerHTML = '';
+    if (listMode === 'sales') { renderSales(box); return; }
     const emptyCard = (text) => { const c = el('div', 'list'); c.append(el('div', 'empty', text)); box.append(c); };
     if (!listData) { emptyCard('読み込み中…'); return; }
     if (listMode === 'now') {
@@ -866,6 +890,73 @@
       });
     }
   }
+  // ===== 売上（今月／先月の前日まで。スタッフ向け） =====
+  function renderSales(box) {
+    const n = (v) => Number(v).toLocaleString('ja-JP');
+    const seg = el('div', 'seg two');
+    [['this', '今月'], ['prev', '先月']].forEach(([k, label]) => {
+      const b = el('button', salesMonth === k ? 'on' : '', label);
+      b.addEventListener('click', () => { salesMonth = k; renderList(); if (!salesData[k]) loadSales(); });
+      seg.append(b);
+    });
+    box.append(seg);
+    const emptyCard = (text) => { const c = el('div', 'list'); c.append(el('div', 'empty', text)); box.append(c); };
+    const d = salesData[salesMonth];
+    if (!d) { emptyCard('読み込み中…'); return; }
+    if (!d.ok) { emptyCard(d.message || '読み込みに失敗しました。'); return; }
+    if (d.empty) { emptyCard(d.title + 'の記録はまだありません（前日までの分を表示します）。'); return; }
+
+    // ----- 月のまとめ -----
+    const sum = el('div', 'ssum');
+    sum.append(el('div', 'shead', d.title + '（' + d.range + '）'));
+    const big = el('div', 'sbig'); big.append(el('span', '', '総売上'), el('b', '', yen(d.total))); sum.append(big);
+    if (d.compare) sum.append(el('div', 'ssub', d.compare.label + ' ' + yen(d.compare.total) + '（' + (d.compare.diff >= 0 ? '+' : '−') + n(Math.abs(d.compare.diff)) + '）'));
+    const g = el('div', 'sgoal'); g.append(el('span', '', '目標 ' + yen(d.goal)), el('b', '', d.rate + '%')); sum.append(g);
+    const bar = el('div', 'gbar'); const fill = el('i'); fill.style.width = Math.min(100, d.rate) + '%'; bar.append(fill); sum.append(bar);
+    if (d.total >= d.goal) sum.append(el('div', 'ssub sok', '目標達成 ✓'));
+    else if (d.isThis && d.remaining > 0) {
+      const pace = el('div', 'ssub');
+      pace.append('今日までの目標 ' + yen(d.paceGoal) + ' → ');
+      pace.append(d.total >= d.paceGoal ? el('span', 'sok', '✓ ' + n(d.total - d.paceGoal) + '円 上回っています') : el('span', 'sng', 'あと ' + n(d.paceGoal - d.total) + '円'));
+      sum.append(pace);
+      sum.append(el('div', 'ssub', '残り ' + d.remaining + '日・1日 ' + yen(d.perDay) + 'で目標達成'));
+    } else sum.append(el('div', 'ssub sng', '目標まで あと ' + yen(d.goal - d.total) + 'でした'));
+    sum.append(el('div', 'ssub', '来客 ' + n(d.visitors) + '人・客単価 ' + (d.unit ? yen(d.unit) : '—')));
+    sum.append(el('div', 'ssub', '1日の目標 ' + yen(d.dailyGoal) + '（超えた日に◎）'));
+    if (d.best) sum.append(el('div', 'ssub', 'いちばん売れた日 ' + d.best.label + ' ' + yen(d.best.total)));
+    box.append(sum);
+
+    // ----- 曜日ごとの平均 -----
+    if (d.weekdays.length) {
+      const wrap = el('div', 'group');
+      wrap.append(el('div', 'glabel', '曜日ごとの平均'));
+      const wds = el('div', 'wds');
+      d.weekdays.forEach((x) => { const c = el('div', '', x.w); c.append(el('b', '', n(x.avg))); wds.append(c); });
+      wrap.append(wds); box.append(wrap);
+    }
+
+    // ----- 日ごと（新しい日から） -----
+    const card = el('div', 'list');
+    d.days.forEach((x) => {
+      const row = el('div', 'item' + (x.closed ? ' off' : ''));
+      row.append(el('div', 'what', x.label));
+      const has = !x.closed && x.total !== null && x.total !== undefined;
+      row.append(el('div', 'amt' + (x.goal ? ' goal' : ''), x.closed ? (x.sun ? '休み' : '休業') : has ? n(x.total) + '円' + (x.goal ? ' ◎' : '') : '—'));
+      if (!x.closed) row.append(el('div', 'meta', (x.visitors !== null && x.visitors !== undefined ? n(x.visitors) + '人' : '—人') + '・客単価 ' + (x.unit ? yen(x.unit) : '—')));
+      if (x.staff.length) row.append(el('div', 'staff', x.staff.join('、')));
+      card.append(row);
+    });
+    box.append(card);
+  }
+  async function loadSales() {
+    const k = salesMonth;
+    delete salesData[k];
+    if (listMode === 'sales') renderList();
+    try { salesData[k] = await api({ action: 'register_sales', month: k }); }
+    catch (e) { salesData[k] = { ok: false, message: '読み込みに失敗しました。' }; }
+    if (listMode === 'sales') renderList();
+  }
+
   // 今のレジ残高（開け中は推定、締め後は締めの金額＋入出金）
   function balanceCard(b) {
     const n = (v) => Number(v).toLocaleString('ja-JP');
@@ -988,7 +1079,8 @@
   $('moneyBack').addEventListener('click', toMoneyForm);
   $('lNow').addEventListener('click', () => { listMode = 'now'; renderList(); });
   $('lWeek').addEventListener('click', () => { listMode = 'week'; renderList(); });
-  $('reload').addEventListener('click', loadList);
+  $('lSales').addEventListener('click', () => { listMode = 'sales'; renderList(); if (!salesData[salesMonth]) loadSales(); });
+  $('reload').addEventListener('click', () => (listMode === 'sales' ? loadSales() : loadList()));
   $('again').addEventListener('click', again);
   $('close').addEventListener('click', () => { if (liff.isInClient()) liff.closeWindow(); else window.close(); });
 
